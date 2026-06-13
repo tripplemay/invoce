@@ -1,0 +1,13 @@
+-r requirements.txt
+
+# ---- Lint / format / types ----
+ruff>=0.8
+black>=24.10
+mypy>=1.13
+
+# ---- Test ----
+pytest>=8.3
+pytest-asyncio>=0.24
+pytest-cov>=6.0
+asgi-lifespan>=2.1
+types-python-dateutil

@@ -1,0 +1,69 @@
+name: invoce
+
+# 生产编排：使用 GHCR 预构建镜像（由 CI 推送），不在服务器上构建。
+# 需要的环境变量（来自服务器上的 .env，不进仓库）：
+#   GH_REPO   = owner/repo（小写），IMAGE_TAG = 镜像 tag（默认 latest）
+#   POSTGRES_* / NEXT_PUBLIC_API_BASE_URL 及 backend 所需的全部密钥
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ghcr.io/${GH_REPO}/api:${IMAGE_TAG:-latest}
+    restart: always
+    # 生产不在此处迁移；迁移由部署流程的独立步骤执行（先迁移后重启）
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"  # 仅绑本机，由前置反代（nginx/caddy）对外暴露
+
+  worker:
+    image: ghcr.io/${GH_REPO}/api:${IMAGE_TAG:-latest}
+    restart: always
+    command: arq app.worker.settings.WorkerSettings
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: ghcr.io/${GH_REPO}/frontend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:

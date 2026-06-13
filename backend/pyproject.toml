@@ -1,0 +1,27 @@
+# 仅用于工具配置（依赖见 requirements*.txt，Docker 用 pip 安装）
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+# B008: FastAPI 习惯用法 Depends() 作为默认值
+# E501: 行宽交给 black 管（black 不换行注释/字符串，E501 只会对中文长注释误报）
+ignore = ["B008", "E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing"

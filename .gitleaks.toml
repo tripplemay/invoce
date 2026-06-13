@@ -1,0 +1,9 @@
+# 继承 gitleaks 默认规则，仅放行示例文件里的本地开发占位值（非真实凭证）
+[extend]
+useDefault = true
+
+[allowlist]
+description = "放行 .env.example 中的开发占位密钥（全零 Fernet / dev JWT 等）"
+paths = [
+  '''.*\.env\.example''',
+]
