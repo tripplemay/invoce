@@ -90,9 +90,12 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             export GH_REPO="${{ needs.build-and-push.outputs.repo_lc }}"
             export IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+            # 拉取前先清理未使用镜像（保留运行中的），避免磁盘累积撑爆
+            docker image prune -af || true
+            docker builder prune -af || true
             docker compose -f docker-compose.prod.yml pull
             # 先迁移，后重启（单副本，无竞态）
             docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
             docker compose -f docker-compose.prod.yml up -d
             docker logout ghcr.io || true
-            docker image prune -f
+            docker image prune -af || true
