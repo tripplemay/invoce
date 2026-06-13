@@ -10,14 +10,42 @@ import {
 } from '@tanstack/react-table';
 import Card from 'components/card';
 import { useState } from 'react';
-import { Invoice, SOURCE_LABELS, STATUS_LABELS } from 'lib/types';
+import {
+  Invoice,
+  ReimbursementStatus,
+  SOURCE_LABELS,
+  STATUS_LABELS,
+} from 'lib/types';
 import StatusBadge from './StatusBadge';
+
+const NEXT_STATUS: Record<ReimbursementStatus, ReimbursementStatus | null> = {
+  unreimbursed: 'submitted',
+  submitted: 'reimbursed',
+  reimbursed: null,
+};
+const NEXT_LABEL: Record<ReimbursementStatus, string> = {
+  unreimbursed: '标记报销中',
+  submitted: '标记已到账',
+  reimbursed: '',
+};
 
 const TABS: { key: string; label: string; match: (i: Invoice) => boolean }[] = [
   { key: 'all', label: '全部', match: () => true },
-  { key: 'unreimbursed', label: '待报销', match: (i) => i.reimbursement_status === 'unreimbursed' },
-  { key: 'submitted', label: '报销中', match: (i) => i.reimbursement_status === 'submitted' },
-  { key: 'reimbursed', label: '已完成', match: (i) => i.reimbursement_status === 'reimbursed' },
+  {
+    key: 'unreimbursed',
+    label: '待报销',
+    match: (i) => i.reimbursement_status === 'unreimbursed',
+  },
+  {
+    key: 'submitted',
+    label: '报销中',
+    match: (i) => i.reimbursement_status === 'submitted',
+  },
+  {
+    key: 'reimbursed',
+    label: '已完成',
+    match: (i) => i.reimbursement_status === 'reimbursed',
+  },
 ];
 
 const columnHelper = createColumnHelper<Invoice>();
@@ -28,9 +56,14 @@ const dash = (v: string | null) => (v == null || v === '' ? '—' : v);
 interface Props {
   data: Invoice[];
   onSelect: (i: Invoice) => void;
+  onAdvanceStatus: (i: Invoice) => void;
 }
 
-export default function InvoiceTable({ data, onSelect }: Props) {
+export default function InvoiceTable({
+  data,
+  onSelect,
+  onAdvanceStatus,
+}: Props) {
   const [tab, setTab] = useState('all');
   const [sorting, setSorting] = useState<SortingState>([]);
   const filtered = data.filter(TABS.find((t) => t.key === tab)!.match);
@@ -55,7 +88,9 @@ export default function InvoiceTable({ data, onSelect }: Props) {
     columnHelper.accessor('total_amount', {
       header: () => <p className={HEAD}>价税合计</p>,
       cell: (info) => (
-        <p className={CELL}>{info.getValue() == null ? '—' : `¥${info.getValue()}`}</p>
+        <p className={CELL}>
+          {info.getValue() == null ? '—' : `¥${info.getValue()}`}
+        </p>
       ),
     }),
     columnHelper.accessor('category', {
@@ -80,6 +115,29 @@ export default function InvoiceTable({ data, onSelect }: Props) {
         ) : (
           <StatusBadge status={info.getValue()} />
         ),
+    }),
+    columnHelper.display({
+      id: 'actions',
+      header: () => <p className={HEAD}>操作</p>,
+      cell: (info) => {
+        const row = info.row.original;
+        const next = NEXT_STATUS[row.reimbursement_status];
+        if (row.status === 'processing' || !next) {
+          return <span className="text-xs text-gray-300">—</span>;
+        }
+        return (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdvanceStatus(row);
+            }}
+            className="dark:bg-brand-500/10 rounded-lg bg-brand-50 px-3 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 dark:text-brand-400"
+          >
+            {NEXT_LABEL[row.reimbursement_status]}
+          </button>
+        );
+      },
     }),
   ];
 
@@ -122,7 +180,10 @@ export default function InvoiceTable({ data, onSelect }: Props) {
                     onClick={header.column.getToggleSortingHandler()}
                     className="cursor-pointer border-b border-gray-200 pb-2 pr-4 pt-4 text-start dark:border-white/30"
                   >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
+                    {flexRender(
+                      header.column.columnDef.header,
+                      header.getContext(),
+                    )}
                   </th>
                 ))}
               </tr>
@@ -136,7 +197,10 @@ export default function InvoiceTable({ data, onSelect }: Props) {
                 className="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-navy-900"
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="min-w-[120px] border-white/0 py-3 pr-4">
+                  <td
+                    key={cell.id}
+                    className="min-w-[120px] border-white/0 py-3 pr-4"
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
@@ -144,7 +208,10 @@ export default function InvoiceTable({ data, onSelect }: Props) {
             ))}
             {table.getRowModel().rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="py-10 text-center text-sm text-gray-400">
+                <td
+                  colSpan={columns.length}
+                  className="py-10 text-center text-sm text-gray-400"
+                >
                   暂无发票
                 </td>
               </tr>

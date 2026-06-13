@@ -3,33 +3,39 @@ import Card from 'components/card';
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { MdCloudUpload } from 'react-icons/md';
+import { uploadInvoices } from 'lib/invoices';
 
 interface UploadItem {
   id: string;
   name: string;
-  status: 'processing' | 'done';
+  status: 'processing' | 'done' | 'failed';
 }
 
 export default function DashboardPage() {
   const [items, setItems] = useState<UploadItem[]>([]);
+  const [error, setError] = useState('');
 
-  const onDrop = useCallback((files: File[]) => {
-    const next: UploadItem[] = files.map((f, idx) => ({
-      id: `${Date.now()}-${idx}`,
+  const onDrop = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setError('');
+    const pending: UploadItem[] = files.map((f, idx) => ({
+      id: `tmp-${Date.now()}-${idx}`,
       name: f.name,
       status: 'processing',
     }));
-    setItems((prev) => [...next, ...prev]);
-    // Mock：模拟异步识别完成
-    next.forEach((it) =>
-      setTimeout(
-        () =>
-          setItems((prev) =>
-            prev.map((p) => (p.id === it.id ? { ...p, status: 'done' } : p)),
-          ),
-        2500,
-      ),
-    );
+    const ids = new Set(pending.map((p) => p.id));
+    setItems((prev) => [...pending, ...prev]);
+    try {
+      await uploadInvoices(files);
+      setItems((prev) =>
+        prev.map((p) => (ids.has(p.id) ? { ...p, status: 'done' } : p)),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '上传失败');
+      setItems((prev) =>
+        prev.map((p) => (ids.has(p.id) ? { ...p, status: 'failed' } : p)),
+      );
+    }
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -63,6 +69,7 @@ export default function DashboardPage() {
           </p>
           <p className="mt-1 text-xs text-gray-500">支持 PDF / PNG / JPG，可批量</p>
         </div>
+        {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
       </Card>
 
       <Card extra="w-full p-6">
@@ -81,11 +88,15 @@ export default function DashboardPage() {
                 </span>
                 {it.status === 'processing' ? (
                   <span className="inline-flex animate-pulse items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
-                    识别中…
+                    上传中…
                   </span>
-                ) : (
+                ) : it.status === 'done' ? (
                   <span className="inline-flex items-center rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-600 dark:bg-green-500/10 dark:text-green-400">
                     已入库
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-600 dark:bg-red-500/10 dark:text-red-400">
+                    失败
                   </span>
                 )}
               </div>
