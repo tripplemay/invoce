@@ -1,13 +1,10 @@
-"""ARQ Worker 配置：DB 会话注入 ctx；extract_invoice 任务（阶段4 接入真实 AI）。"""
-
-import uuid
+"""ARQ Worker 配置：DB 会话注入 ctx；extract_invoice 任务（AI 抽取）。"""
 
 from arq.connections import RedisSettings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
-from app.models.enums import InvoiceStatus
-from app.models.invoice import Invoice
+from app.services.extraction import run_extraction
 
 
 async def startup(ctx: dict) -> None:
@@ -26,14 +23,10 @@ async def heartbeat(ctx: dict) -> str:
 
 
 async def extract_invoice(ctx: dict, invoice_id: str) -> str:
-    """AI 抽取任务。阶段4 替换为真实多模态抽取；当前占位：标记为待校对。"""
+    """AI 抽取任务：下载原件 → 多模态抽取 → 落库（pending/failed）。"""
     maker = ctx["sessionmaker"]
     async with maker() as session:
-        inv = await session.get(Invoice, uuid.UUID(invoice_id))
-        if inv is None:
-            return "not found"
-        inv.status = InvoiceStatus.PENDING.value
-        await session.commit()
+        await run_extraction(session, invoice_id)
     return "ok"
 
 

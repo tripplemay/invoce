@@ -22,6 +22,7 @@ from app.schemas.invoice import (
     PreviewOut,
     ReimbursementStatusUpdate,
 )
+from app.services.seller_category import upsert_rule
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -172,6 +173,9 @@ async def update_invoice(
     # 校对保存：号码齐全则标记已校对
     if inv.invoice_number:
         inv.status = InvoiceStatus.VERIFIED.value
+    # 学习开票方→分类映射（用户纠正分类后记忆，后续同开票方自动套用）
+    if inv.category and inv.seller_name:
+        await upsert_rule(session, user.id, inv.seller_name, inv.category)
     await session.commit()
     await session.refresh(inv)
     return inv

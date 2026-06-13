@@ -41,6 +41,14 @@ async def upload_bytes(key: str, data: bytes, content_type: str) -> None:
     await asyncio.to_thread(_put)
 
 
+async def download_bytes(key: str) -> bytes:
+    def _get() -> bytes:
+        resp = _client().get_object(Bucket=settings.s3_bucket, Key=key)
+        return resp["Body"].read()
+
+    return await asyncio.to_thread(_get)
+
+
 async def presigned_get_url(key: str, expires: int | None = None) -> str:
     def _sign() -> str:
         return _client().generate_presigned_url(
