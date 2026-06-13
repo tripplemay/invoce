@@ -31,6 +31,12 @@ def _parse_decimal(v: object) -> Decimal | None:
         return None
 
 
+def _clip(v: object, n: int) -> str | None:
+    if not v:
+        return None
+    return str(v)[:n]
+
+
 def _image_for(file_key: str, raw: bytes) -> tuple[bytes, str]:
     key = file_key.lower()
     if key.endswith(".pdf"):
@@ -57,14 +63,14 @@ async def run_extraction(session: AsyncSession, invoice_id: str | uuid.UUID) -> 
             if rule is not None:
                 category = rule.category
 
-        inv.invoice_code = fields.get("invoice_code") or None
-        inv.invoice_number = fields.get("invoice_number") or None
+        inv.invoice_code = _clip(fields.get("invoice_code"), 64)
+        inv.invoice_number = _clip(fields.get("invoice_number"), 64)
         inv.issue_date = _parse_date(fields.get("issue_date"))
-        inv.invoice_type = fields.get("invoice_type") or None
-        inv.seller_name = seller
-        inv.buyer_name = fields.get("buyer_name") or None
+        inv.invoice_type = _clip(fields.get("invoice_type"), 32)
+        inv.seller_name = _clip(seller, 255)
+        inv.buyer_name = _clip(fields.get("buyer_name"), 255)
         inv.total_amount = _parse_decimal(fields.get("total_amount"))
-        inv.category = category
+        inv.category = _clip(category, 64)
         inv.ai_confidence = _parse_decimal(fields.get("confidence"))
         inv.status = InvoiceStatus.PENDING.value
         await session.commit()

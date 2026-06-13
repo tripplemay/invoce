@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InvoiceOut(BaseModel):
@@ -62,5 +62,5 @@ class PreviewOut(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    invoice_ids: list[uuid.UUID]
+    invoice_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
     mark_submitted: bool = True

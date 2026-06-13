@@ -28,12 +28,19 @@ from app.services.seller_category import upsert_rule
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
-# content_type -> 扩展名
-ALLOWED_TYPES = {
-    "application/pdf": ".pdf",
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-}
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB
+
+
+def detect_file_type(content: bytes) -> tuple[str, str] | None:
+    """按魔数判定类型，不信任客户端 Content-Type。返回 (扩展名, content_type)。"""
+    if content[:4] == b"%PDF":
+        return (".pdf", "application/pdf")
+    if content[:8].startswith(b"\x89PNG\r\n\x1a\n"):
+        return (".png", "image/png")
+    if content[:3] == b"\xff\xd8\xff":
+        return (".jpg", "image/jpeg")
+    return None
+
 
 _REIMBURSE_ORDER = {
     ReimbursementStatus.UNREIMBURSED.value: 0,
@@ -85,14 +92,17 @@ async def upload(
 ) -> list[Invoice]:
     created: list[Invoice] = []
     for f in files:
-        ext = ALLOWED_TYPES.get(f.content_type or "")
-        if ext is None:
-            raise HTTPException(
-                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"不支持的文件类型: {f.content_type}"
-            )
         content = await f.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "文件过大（上限 15MB）")
+        detected = detect_file_type(content)
+        if detected is None:
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "不支持的文件类型（需 PDF/PNG/JPG）"
+            )
+        ext, ctype = detected
         key = storage.build_key(str(user.id), content, ext)
-        await storage.upload_bytes(key, content, f.content_type or "application/octet-stream")
+        await storage.upload_bytes(key, content, ctype)
         inv = Invoice(
             user_id=user.id,
             file_key=key,

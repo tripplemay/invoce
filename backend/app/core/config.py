@@ -2,7 +2,11 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_JWT_SECRET = "dev-change-me-please-use-a-32char-min-secret"
+_DEFAULT_FERNET_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 
 class Settings(BaseSettings):
@@ -52,6 +56,14 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"production", "prod"}
+
+    @model_validator(mode="after")
+    def _forbid_default_secrets_in_prod(self) -> "Settings":
+        if self.is_production and (
+            self.jwt_secret == _DEFAULT_JWT_SECRET or self.fernet_key == _DEFAULT_FERNET_KEY
+        ):
+            raise ValueError("生产环境必须设置非默认的 JWT_SECRET 与 FERNET_KEY")
+        return self
 
 
 @lru_cache

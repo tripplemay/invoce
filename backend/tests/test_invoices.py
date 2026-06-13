@@ -36,8 +36,11 @@ async def test_upload_creates_processing_invoice(auth_client, mock_io) -> None:
     assert len(lst.json()) == 1
 
 
-async def test_upload_rejects_unsupported_type(auth_client, mock_io) -> None:
-    r = await _upload(auth_client, name="x.txt", ctype="text/plain")
+async def test_upload_rejects_bad_magic(auth_client, mock_io) -> None:
+    # 即使谎报 content_type 为 pdf，魔数不符也应拒绝
+    r = await auth_client.post(
+        "/invoices/upload", files={"files": ("x.pdf", b"plain text not a pdf", "application/pdf")}
+    )
     assert r.status_code == 415
 
 
@@ -94,7 +97,7 @@ async def test_invoice_isolation(client, mock_io) -> None:
     ta = ra.json()["access_token"]
     up = await client.post(
         "/invoices/upload",
-        files={"files": ("a.pdf", b"x", "application/pdf")},
+        files={"files": ("a.pdf", b"%PDF-1.4", "application/pdf")},
         headers={"Authorization": f"Bearer {ta}"},
     )
     iid = up.json()[0]["id"]

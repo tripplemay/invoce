@@ -3,7 +3,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.netguard import is_blocked_literal_host
 
 
 class EmailAccountCreate(BaseModel):
@@ -12,8 +14,15 @@ class EmailAccountCreate(BaseModel):
         min_length=1, max_length=128, description="16 位授权码（明文入参，服务端加密存储）"
     )
     imap_host: str = "imap.qq.com"
-    imap_port: int = 993
+    imap_port: int = Field(default=993, ge=1, le=65535)
     enabled: bool = True
+
+    @field_validator("imap_host")
+    @classmethod
+    def _check_host(cls, v: str) -> str:
+        if is_blocked_literal_host(v):
+            raise ValueError("imap_host 不可指向内网/本机地址")
+        return v
 
 
 class EmailAccountUpdate(BaseModel):

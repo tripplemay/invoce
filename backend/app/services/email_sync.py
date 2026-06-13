@@ -3,6 +3,7 @@
 幂等：靠 email_accounts.last_sync_uid（UID 递增），且 fetch 用 BODY.PEEK 不改已读状态。
 """
 
+import asyncio
 import email
 from collections.abc import Awaitable, Callable
 
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
 from app.core.crypto import decrypt
+from app.core.netguard import is_safe_url
 from app.models.email_account import EmailAccount
 from app.models.email_sync_log import EmailSyncLog
 from app.models.enums import EmailSyncStatus, InvoiceSource, InvoiceStatus, ReimbursementStatus
@@ -28,6 +30,8 @@ async def _download_external(urls: list[str]) -> list[tuple[bytes, str]]:
         return files
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         for url in urls[:10]:
+            if not await asyncio.to_thread(is_safe_url, url):
+                continue  # SSRF 防护：拒绝内网/私有地址
             try:
                 r = await client.get(url)
                 ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()

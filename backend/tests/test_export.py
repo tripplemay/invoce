@@ -40,7 +40,7 @@ def test_build_excel_returns_xlsx() -> None:
 
 async def test_export_zip_and_marks_submitted(auth_client: AsyncClient, mock_io) -> None:
     up = await auth_client.post(
-        "/invoices/upload", files={"files": ("a.pdf", b"x", "application/pdf")}
+        "/invoices/upload", files={"files": ("a.pdf", b"%PDF-1.4", "application/pdf")}
     )
     inv = up.json()[0]
     await auth_client.patch(
@@ -66,7 +66,7 @@ async def test_export_zip_and_marks_submitted(auth_client: AsyncClient, mock_io)
 
 async def test_export_without_marking(auth_client: AsyncClient, mock_io) -> None:
     up = await auth_client.post(
-        "/invoices/upload", files={"files": ("a.pdf", b"x", "application/pdf")}
+        "/invoices/upload", files={"files": ("a.pdf", b"%PDF-1.4", "application/pdf")}
     )
     inv = up.json()[0]
     r = await auth_client.post(
