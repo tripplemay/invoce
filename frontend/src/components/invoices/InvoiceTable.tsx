@@ -57,18 +57,51 @@ interface Props {
   data: Invoice[];
   onSelect: (i: Invoice) => void;
   onAdvanceStatus: (i: Invoice) => void;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onToggleAll: (ids: string[], checked: boolean) => void;
 }
 
 export default function InvoiceTable({
   data,
   onSelect,
   onAdvanceStatus,
+  selectedIds,
+  onToggleSelect,
+  onToggleAll,
 }: Props) {
   const [tab, setTab] = useState('all');
   const [sorting, setSorting] = useState<SortingState>([]);
   const filtered = data.filter(TABS.find((t) => t.key === tab)!.match);
 
   const columns = [
+    columnHelper.display({
+      id: 'select',
+      header: () => (
+        <input
+          type="checkbox"
+          className="h-4 w-4 cursor-pointer accent-brand-500"
+          checked={
+            filtered.length > 0 && filtered.every((i) => selectedIds.has(i.id))
+          }
+          onChange={(e) =>
+            onToggleAll(
+              filtered.map((i) => i.id),
+              e.target.checked,
+            )
+          }
+        />
+      ),
+      cell: (info) => (
+        <input
+          type="checkbox"
+          className="h-4 w-4 cursor-pointer accent-brand-500"
+          checked={selectedIds.has(info.row.original.id)}
+          onClick={(e) => e.stopPropagation()}
+          onChange={() => onToggleSelect(info.row.original.id)}
+        />
+      ),
+    }),
     columnHelper.accessor('issue_date', {
       header: () => <p className={HEAD}>开票日期</p>,
       cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,

@@ -59,3 +59,8 @@ class ReimbursementStatusUpdate(BaseModel):
 class PreviewOut(BaseModel):
     url: str
     expires_in: int
+
+
+class ExportRequest(BaseModel):
+    invoice_ids: list[uuid.UUID]
+    mark_submitted: bool = True

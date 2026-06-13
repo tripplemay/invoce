@@ -4,7 +4,9 @@ import { api, getToken } from './auth';
 import { Invoice, ReimbursementStatus } from './types';
 
 export function listInvoices(reimbursementStatus?: string): Promise<Invoice[]> {
-  const q = reimbursementStatus ? `?reimbursement_status=${reimbursementStatus}` : '';
+  const q = reimbursementStatus
+    ? `?reimbursement_status=${reimbursementStatus}`
+    : '';
   return api.get<Invoice[]>(`/invoices${q}`);
 }
 
@@ -12,7 +14,10 @@ export function getInvoice(id: string): Promise<Invoice> {
   return api.get<Invoice>(`/invoices/${id}`);
 }
 
-export function updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice> {
+export function updateInvoice(
+  id: string,
+  data: Partial<Invoice>,
+): Promise<Invoice> {
   return api.patch<Invoice>(`/invoices/${id}`, data);
 }
 
@@ -76,4 +81,27 @@ export interface PreviewResp {
 
 export function getPreview(id: string): Promise<PreviewResp> {
   return api.get<PreviewResp>(`/invoices/${id}/preview`);
+}
+
+export async function exportInvoices(
+  ids: string[],
+  markSubmitted: boolean,
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE_URL}/invoices/export`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ invoice_ids: ids, mark_submitted: markSubmitted }),
+  });
+  if (!res.ok) throw new Error('导出失败');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'reimbursement.zip';
+  a.click();
+  URL.revokeObjectURL(url);
 }
