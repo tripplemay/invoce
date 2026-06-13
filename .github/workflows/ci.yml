@@ -90,11 +90,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Trivy (filesystem vuln scan)
-        uses: aquasecurity/trivy-action@v0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          # 初期报告为主不阻断；稳定后改为 "1" 让高危漏洞 fail CI
-          exit-code: "0"
+        # 直接装二进制，避开 trivy-action 的传递依赖版本问题
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          # 初期报告为主不阻断（--exit-code 0）；稳定后改为 1 让高危漏洞 fail CI
+          trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 --no-progress .
