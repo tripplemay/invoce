@@ -1,9 +1,11 @@
 """ARQ Worker 配置：DB 会话注入 ctx；extract_invoice 任务（AI 抽取）。"""
 
+from arq import cron
 from arq.connections import RedisSettings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+from app.services.email_sync import sync_all
 from app.services.extraction import run_extraction
 
 
@@ -32,7 +34,8 @@ async def extract_invoice(ctx: dict, invoice_id: str) -> str:
 
 class WorkerSettings:
     functions = [heartbeat, extract_invoice]
-    cron_jobs: list = []
+    # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
+    cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     on_startup = startup
     on_shutdown = shutdown

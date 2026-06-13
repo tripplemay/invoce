@@ -102,3 +102,18 @@ async def test_invoice_isolation(client, mock_io) -> None:
     tb = rb.json()["access_token"]
     got = await client.get(f"/invoices/{iid}", headers={"Authorization": f"Bearer {tb}"})
     assert got.status_code == 404
+
+
+async def test_category_correction_learns_rule(auth_client, mock_io, db_session) -> None:
+    from sqlalchemy import select
+
+    from app.models.seller_category_rule import SellerCategoryRule
+
+    inv = (await _upload(auth_client)).json()[0]
+    await auth_client.patch(
+        f"/invoices/{inv['id']}",
+        json={"invoice_number": "R1", "seller_name": "小米", "category": "运动爱好"},
+    )
+    rule = (await db_session.scalars(select(SellerCategoryRule))).first()
+    assert rule is not None
+    assert rule.seller_name == "小米" and rule.category == "运动爱好"
