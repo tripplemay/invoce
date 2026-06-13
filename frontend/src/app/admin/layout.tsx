@@ -14,6 +14,7 @@ import { Portal } from '@chakra-ui/portal';
 import Navbar from 'components/navbar';
 import Sidebar from 'components/sidebar';
 import Footer from 'components/footer/Footer';
+import AuthGuard from 'components/auth/AuthGuard';
 
 export default function Admin({ children }: { children: React.ReactNode }) {
   // states and functions
@@ -62,7 +63,7 @@ export default function Admin({ children }: { children: React.ReactNode }) {
               />
             </Portal>
             <div className="mx-auto min-h-screen p-2 !pt-[100px] md:p-2">
-              {children}
+              <AuthGuard>{children}</AuthGuard>
             </div>
             <div className="p-3">
               <Footer />

@@ -14,6 +14,7 @@ import {
 } from 'react-icons/io';
 import avatar from '/public/img/avatars/avatar4.png';
 import Image from 'next/image';
+import LogoutButton from 'components/auth/LogoutButton';
 
 const Navbar = (props: {
   onOpenSidenav: () => void;
@@ -228,12 +229,7 @@ const Navbar = (props: {
               >
                 Newsletter Settings
               </a>
-              <a
-                href=" "
-                className="mt-3 text-sm font-medium text-red-500 hover:text-red-500"
-              >
-                Log Out
-              </a>
+              <LogoutButton className="mt-3 text-left text-sm font-medium text-red-500 hover:text-red-500" />
             </div>
           </div>
         </Dropdown>
