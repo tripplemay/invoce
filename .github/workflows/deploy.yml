@@ -76,6 +76,8 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          # VPS 到 GHCR 带宽有限，首次拉取大镜像较慢，放宽命令超时
+          command_timeout: 40m
           script: |
             set -euo pipefail
             cd "${{ secrets.VPS_APP_DIR }}"
