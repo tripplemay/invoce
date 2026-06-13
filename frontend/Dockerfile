@@ -15,6 +15,9 @@ RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi 
 
 # Copy source and build
 COPY . .
+# Next 的 NEXT_PUBLIC_* 是构建期变量，必须在 build 前注入生产 API 地址
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 RUN npm run build
 
 # ---- Runner stage ----

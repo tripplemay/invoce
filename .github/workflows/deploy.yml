@@ -1,9 +1,8 @@
 name: Deploy
 
 on:
-  # VPS secrets 就绪后，取消下面两行注释即可启用「合并 main 自动部署」
-  # push:
-  #   branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -52,6 +51,9 @@ jobs:
         with:
           context: ./frontend
           push: true
+          # Next 的 NEXT_PUBLIC_* 构建期注入生产 API 地址（同域名 /api）
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=https://invoce.vpanel.cc/api
           tags: |
             ghcr.io/${{ steps.meta.outputs.repo_lc }}/frontend:latest
             ghcr.io/${{ steps.meta.outputs.repo_lc }}/frontend:${{ steps.meta.outputs.sha }}
@@ -62,23 +64,29 @@ jobs:
     name: Deploy to VPS
     needs: build-and-push
     runs-on: ubuntu-latest
-    # 在仓库 Settings → Environments 给 production 加保护规则 → 需人工 approve 才上生产
     environment: production
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: SSH deploy
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
+          port: ${{ secrets.VPS_PORT }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -euo pipefail
             cd "${{ secrets.VPS_APP_DIR }}"
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            git pull --ff-only
+            # 用本次运行的 GITHUB_TOKEN 临时登录 GHCR 拉私有镜像（免 PAT）
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             export GH_REPO="${{ needs.build-and-push.outputs.repo_lc }}"
             export IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
             docker compose -f docker-compose.prod.yml pull
             # 先迁移，后重启（单副本，无竞态）
             docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
             docker compose -f docker-compose.prod.yml up -d
+            docker logout ghcr.io || true
             docker image prune -f

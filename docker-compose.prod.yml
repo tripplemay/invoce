@@ -34,7 +34,7 @@ services:
     image: ghcr.io/${GH_REPO}/api:${IMAGE_TAG:-latest}
     restart: always
     # 生产不在此处迁移；迁移由部署流程的独立步骤执行（先迁移后重启）
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
     env_file: .env
     depends_on:
       postgres:
@@ -61,7 +61,8 @@ services:
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
     ports:
-      - "127.0.0.1:3000:3000"
+      # 宿主 3000 已被占用，对外用 3100；nginx 反代到此
+      - "127.0.0.1:3100:3000"
     depends_on:
       - api
 
