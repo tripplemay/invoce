@@ -7,6 +7,8 @@ module.exports = {
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     // Or if using `src` directory:
     './src/**/*.{js,ts,jsx,tsx,mdx}',
+    // Tremor 图表组件的类（否则会被 purge）
+    './node_modules/@tremor/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {

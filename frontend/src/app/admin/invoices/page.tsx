@@ -1,17 +1,23 @@
 'use client';
-import Card from 'components/card';
+import { useState } from 'react';
+import InvoiceDrawer from 'components/invoices/InvoiceDrawer';
+import InvoiceTable from 'components/invoices/InvoiceTable';
+import { MOCK_INVOICES } from 'lib/mock';
+import { Invoice } from 'lib/types';
 
 export default function InvoicesPage() {
+  const [selected, setSelected] = useState<Invoice | null>(null);
+  const [open, setOpen] = useState(false);
+
+  function handleSelect(invoice: Invoice) {
+    setSelected(invoice);
+    setOpen(true);
+  }
+
   return (
-    <div className="mt-3 grid h-full grid-cols-1 gap-5">
-      <Card extra="w-full h-full p-6">
-        <h1 className="text-2xl font-bold text-navy-700 dark:text-white">
-          发票管理
-        </h1>
-        <p className="mt-2 text-base text-gray-600 dark:text-gray-400">
-          建设中
-        </p>
-      </Card>
+    <div className="mt-3">
+      <InvoiceTable data={MOCK_INVOICES} onSelect={handleSelect} />
+      <InvoiceDrawer invoice={selected} open={open} onClose={() => setOpen(false)} />
     </div>
   );
 }
