@@ -1,6 +1,7 @@
 """邮件解析（纯函数，可测）：关键词匹配 + 提取标准发票文件（松散附件 / zip 内 PDF / 内嵌 Base64 图）。"""
 
 import base64
+import contextlib
 import io
 import re
 import zipfile
@@ -52,10 +53,8 @@ def _zip_member_basename(info: "zipfile.ZipInfo") -> str:
     """取 zip 条目的真实文件名（basename）：非 UTF-8 标志位时 zipfile 用 cp437 解码，需还原成 gbk。"""
     name = info.filename
     if not (info.flag_bits & 0x800):
-        try:
+        with contextlib.suppress(UnicodeEncodeError, UnicodeDecodeError):
             name = name.encode("cp437").decode("gbk")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
     return name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
 
 
