@@ -2,7 +2,11 @@
 import InvoiceDrawer from 'components/invoices/InvoiceDrawer';
 import InvoiceTable from 'components/invoices/InvoiceTable';
 import { useCallback, useEffect, useState } from 'react';
-import { changeReimbursementStatus, exportInvoices, listInvoices } from 'lib/invoices';
+import {
+  changeReimbursementStatus,
+  exportInvoices,
+  listInvoices,
+} from 'lib/invoices';
 import { Invoice, ReimbursementStatus } from 'lib/types';
 
 export default function InvoicesPage() {
@@ -28,38 +32,43 @@ export default function InvoicesPage() {
     refresh();
   }, [refresh]);
 
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
-  function toggleAll(ids: string[], on: boolean) {
+  const toggleAll = useCallback((ids: string[], on: boolean) => {
     setChecked((prev) => {
       const next = new Set(prev);
       ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
       return next;
     });
-  }
+  }, []);
 
-  function handleSelect(invoice: Invoice) {
+  const handleSelect = useCallback((invoice: Invoice) => {
     setSelected(invoice);
     setOpen(true);
-  }
+  }, []);
 
-  async function handleAdvance(invoice: Invoice) {
-    const next: ReimbursementStatus =
-      invoice.reimbursement_status === 'unreimbursed' ? 'submitted' : 'reimbursed';
-    try {
-      await changeReimbursementStatus(invoice.id, next);
-      await refresh();
-    } catch {
-      /* ignore */
-    }
-  }
+  const handleAdvance = useCallback(
+    async (invoice: Invoice) => {
+      const next: ReimbursementStatus =
+        invoice.reimbursement_status === 'unreimbursed'
+          ? 'submitted'
+          : 'reimbursed';
+      try {
+        await changeReimbursementStatus(invoice.id, next);
+        await refresh();
+      } catch {
+        /* ignore */
+      }
+    },
+    [refresh],
+  );
 
   async function doExport(markSubmitted: boolean) {
     setExporting(true);
@@ -78,7 +87,7 @@ export default function InvoicesPage() {
   return (
     <div className="mt-3">
       {checked.size > 0 && (
-        <div className="mb-3 flex items-center justify-between rounded-xl bg-brand-50 px-4 py-3 dark:bg-brand-500/10">
+        <div className="dark:bg-brand-500/10 mb-3 flex items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
           <span className="text-sm font-medium text-brand-700 dark:text-brand-300">
             已选 {checked.size} 张发票
           </span>
@@ -113,12 +122,14 @@ export default function InvoicesPage() {
       />
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="bg-black/40 fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-[440px] rounded-2xl bg-white p-6 shadow-2xl dark:bg-navy-800">
-            <h3 className="text-lg font-bold text-navy-700 dark:text-white">导出报销单</h3>
+            <h3 className="text-lg font-bold text-navy-700 dark:text-white">
+              导出报销单
+            </h3>
             <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
-              报销单 Excel 与原件将打包为 ZIP 下载。是否同步将选中的 {checked.size}{' '}
-              张发票状态变更为「报销中」？
+              报销单 Excel 与原件将打包为 ZIP 下载。是否同步将选中的{' '}
+              {checked.size} 张发票状态变更为「报销中」？
             </p>
             <div className="mt-6 flex flex-col gap-2">
               <button

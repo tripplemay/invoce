@@ -9,7 +9,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import Card from 'components/card';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Invoice,
   ReimbursementStatus,
@@ -72,107 +72,115 @@ export default function InvoiceTable({
 }: Props) {
   const [tab, setTab] = useState('all');
   const [sorting, setSorting] = useState<SortingState>([]);
-  const filtered = data.filter(TABS.find((t) => t.key === tab)!.match);
+  // 必须 useMemo 稳定 data/columns 引用，否则 tanstack 在 React 19 下会无限重渲染("卡死")
+  const filtered = useMemo(
+    () => data.filter(TABS.find((t) => t.key === tab)!.match),
+    [data, tab],
+  );
 
-  const columns = [
-    columnHelper.display({
-      id: 'select',
-      header: () => (
-        <input
-          type="checkbox"
-          className="h-4 w-4 cursor-pointer accent-brand-500"
-          checked={
-            filtered.length > 0 && filtered.every((i) => selectedIds.has(i.id))
-          }
-          onChange={(e) =>
-            onToggleAll(
-              filtered.map((i) => i.id),
-              e.target.checked,
-            )
-          }
-        />
-      ),
-      cell: (info) => (
-        <input
-          type="checkbox"
-          className="h-4 w-4 cursor-pointer accent-brand-500"
-          checked={selectedIds.has(info.row.original.id)}
-          onClick={(e) => e.stopPropagation()}
-          onChange={() => onToggleSelect(info.row.original.id)}
-        />
-      ),
-    }),
-    columnHelper.accessor('issue_date', {
-      header: () => <p className={HEAD}>开票日期</p>,
-      cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
-    }),
-    columnHelper.accessor('invoice_type', {
-      header: () => <p className={HEAD}>类型</p>,
-      cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
-    }),
-    columnHelper.accessor('seller_name', {
-      header: () => <p className={HEAD}>开票方</p>,
-      cell: (info) => (
-        <p className="max-w-[200px] truncate text-sm font-medium text-navy-700 dark:text-white">
-          {dash(info.getValue())}
-        </p>
-      ),
-    }),
-    columnHelper.accessor('total_amount', {
-      header: () => <p className={HEAD}>价税合计</p>,
-      cell: (info) => (
-        <p className={CELL}>
-          {info.getValue() == null ? '—' : `¥${info.getValue()}`}
-        </p>
-      ),
-    }),
-    columnHelper.accessor('category', {
-      header: () => <p className={HEAD}>归属分类</p>,
-      cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
-    }),
-    columnHelper.accessor('source', {
-      header: () => <p className={HEAD}>来源</p>,
-      cell: (info) => (
-        <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600 dark:bg-navy-700 dark:text-gray-300">
-          {SOURCE_LABELS[info.getValue()]}
-        </span>
-      ),
-    }),
-    columnHelper.accessor('reimbursement_status', {
-      header: () => <p className={HEAD}>报销状态</p>,
-      cell: (info) =>
-        info.row.original.status === 'processing' ? (
-          <span className="inline-flex animate-pulse items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
-            {STATUS_LABELS.processing}…
-          </span>
-        ) : (
-          <StatusBadge status={info.getValue()} />
+  const columns = useMemo(
+    () => [
+      columnHelper.display({
+        id: 'select',
+        header: () => (
+          <input
+            type="checkbox"
+            className="h-4 w-4 cursor-pointer accent-brand-500"
+            checked={
+              filtered.length > 0 &&
+              filtered.every((i) => selectedIds.has(i.id))
+            }
+            onChange={(e) =>
+              onToggleAll(
+                filtered.map((i) => i.id),
+                e.target.checked,
+              )
+            }
+          />
         ),
-    }),
-    columnHelper.display({
-      id: 'actions',
-      header: () => <p className={HEAD}>操作</p>,
-      cell: (info) => {
-        const row = info.row.original;
-        const next = NEXT_STATUS[row.reimbursement_status];
-        if (row.status === 'processing' || !next) {
-          return <span className="text-xs text-gray-300">—</span>;
-        }
-        return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAdvanceStatus(row);
-            }}
-            className="dark:bg-brand-500/10 rounded-lg bg-brand-50 px-3 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 dark:text-brand-400"
-          >
-            {NEXT_LABEL[row.reimbursement_status]}
-          </button>
-        );
-      },
-    }),
-  ];
+        cell: (info) => (
+          <input
+            type="checkbox"
+            className="h-4 w-4 cursor-pointer accent-brand-500"
+            checked={selectedIds.has(info.row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => onToggleSelect(info.row.original.id)}
+          />
+        ),
+      }),
+      columnHelper.accessor('issue_date', {
+        header: () => <p className={HEAD}>开票日期</p>,
+        cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
+      }),
+      columnHelper.accessor('invoice_type', {
+        header: () => <p className={HEAD}>类型</p>,
+        cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
+      }),
+      columnHelper.accessor('seller_name', {
+        header: () => <p className={HEAD}>开票方</p>,
+        cell: (info) => (
+          <p className="max-w-[200px] truncate text-sm font-medium text-navy-700 dark:text-white">
+            {dash(info.getValue())}
+          </p>
+        ),
+      }),
+      columnHelper.accessor('total_amount', {
+        header: () => <p className={HEAD}>价税合计</p>,
+        cell: (info) => (
+          <p className={CELL}>
+            {info.getValue() == null ? '—' : `¥${info.getValue()}`}
+          </p>
+        ),
+      }),
+      columnHelper.accessor('category', {
+        header: () => <p className={HEAD}>归属分类</p>,
+        cell: (info) => <p className={CELL}>{dash(info.getValue())}</p>,
+      }),
+      columnHelper.accessor('source', {
+        header: () => <p className={HEAD}>来源</p>,
+        cell: (info) => (
+          <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600 dark:bg-navy-700 dark:text-gray-300">
+            {SOURCE_LABELS[info.getValue()]}
+          </span>
+        ),
+      }),
+      columnHelper.accessor('reimbursement_status', {
+        header: () => <p className={HEAD}>报销状态</p>,
+        cell: (info) =>
+          info.row.original.status === 'processing' ? (
+            <span className="inline-flex animate-pulse items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
+              {STATUS_LABELS.processing}…
+            </span>
+          ) : (
+            <StatusBadge status={info.getValue()} />
+          ),
+      }),
+      columnHelper.display({
+        id: 'actions',
+        header: () => <p className={HEAD}>操作</p>,
+        cell: (info) => {
+          const row = info.row.original;
+          const next = NEXT_STATUS[row.reimbursement_status];
+          if (row.status === 'processing' || !next) {
+            return <span className="text-xs text-gray-300">—</span>;
+          }
+          return (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdvanceStatus(row);
+              }}
+              className="dark:bg-brand-500/10 rounded-lg bg-brand-50 px-3 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 dark:text-brand-400"
+            >
+              {NEXT_LABEL[row.reimbursement_status]}
+            </button>
+          );
+        },
+      }),
+    ],
+    [filtered, selectedIds, onToggleAll, onToggleSelect, onAdvanceStatus],
+  );
 
   const table = useReactTable({
     data: filtered,
