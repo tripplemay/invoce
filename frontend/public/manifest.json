@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Invoce",
+  "name": "Invoce · 个人发票助手",
   "icons": [
     {
       "src": "favicon.ico",

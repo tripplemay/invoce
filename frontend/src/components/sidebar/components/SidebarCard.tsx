@@ -1,11 +1,40 @@
-import LineChart from 'components/charts/LineChart';
-import { lineChartDataSidebar } from 'variables/charts';
-import { lineChartOptionsSidebar } from 'variables/charts';
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { BsArrowsAngleExpand } from 'react-icons/bs';
-const FreeCard = (props: { [x: string]: any }) => {
+import { listInvoices } from 'lib/invoices';
+import { Invoice } from 'lib/types';
+
+const yuan = (n: number) =>
+  `¥${n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
+
+// 「待报销」业务小卡：展示待报销发票总额，点击跳转发票列表。
+const SidebarCard = (props: { [x: string]: any }) => {
   const { mini, hovered } = props;
+  const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    listInvoices('unreimbursed')
+      .then((invoices: Invoice[]) => {
+        if (!active) return;
+        const sum = invoices.reduce(
+          (acc, i) => acc + (parseFloat(i.total_amount ?? '0') || 0),
+          0,
+        );
+        setTotal(sum);
+      })
+      .catch(() => {
+        if (active) setTotal(0);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
-    <div
+    <Link
+      href="/admin/invoices"
       className={`relative flex h-[300px] w-[240px] flex-col items-center rounded-[20px] bg-gradient-to-br from-brand-400 to-brand-600 ${
         mini === false
           ? ''
@@ -20,7 +49,7 @@ const FreeCard = (props: { [x: string]: any }) => {
         }`}
       />
       <div
-        className={`mt-8 flex flex-col items-center ${
+        className={`mt-auto mb-auto flex flex-col items-center ${
           mini === false
             ? 'block'
             : mini === true && hovered === true
@@ -28,30 +57,11 @@ const FreeCard = (props: { [x: string]: any }) => {
             : 'hidden'
         }`}
       >
-        <h4 className="text-2xl font-bold text-white">$3942.58</h4>
-        <p className="mt-[4px] text-xs font-medium text-white">Total balance</p>
-        <div className="mt-3 flex items-center justify-center rounded-[20px] bg-[#C9FBD5] py-1 px-2">
-          <p className="text-xs font-bold text-green-500">+2.45%</p>
-        </div>
+        <p className="text-xs font-medium text-white">待报销总额</p>
+        <h4 className="mt-[4px] text-3xl font-bold text-white">{yuan(total)}</h4>
       </div>
-
-      {/* Sidebar Card */}
-      <div
-        className={`h-full w-full px-3 pb-3 ${
-          mini === false
-            ? 'block'
-            : mini === true && hovered === true
-            ? 'block'
-            : 'block xl:hidden'
-        }`}
-      >
-        <LineChart
-          chartData={lineChartDataSidebar}
-          chartOptions={lineChartOptionsSidebar}
-        />
-      </div>
-    </div>
+    </Link>
   );
 };
 
-export default FreeCard;
+export default SidebarCard;

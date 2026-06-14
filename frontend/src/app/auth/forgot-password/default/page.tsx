@@ -19,7 +19,7 @@ function ForgotPasswordDefault() {
             <InputField
               variant="auth"
               label="Email"
-              placeholder="mail@simmmple.com"
+              placeholder="mail@example.com"
               id="email"
               type="text"
             />

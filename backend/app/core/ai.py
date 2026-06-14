@@ -2,10 +2,22 @@
 
 import base64
 import json
+import re
 
 import httpx
 
 from app.core.config import settings
+
+
+def _parse_json_lenient(text: str) -> dict:
+    """宽容解析：直接 JSON 失败时，剥离代码围栏并提取首个 {...}。"""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match is None:
+            raise
+        return json.loads(match.group(0))
 
 EXTRACT_SYSTEM_PROMPT = """你是专业的中国发票信息抽取助手。请从用户提供的发票图片中提取结构化字段，并**只**返回 JSON，不要任何解释。
 
@@ -52,4 +64,4 @@ async def extract_invoice_fields(image_bytes: bytes, content_type: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
     content = data["choices"][0]["message"]["content"]
-    return json.loads(content)
+    return _parse_json_lenient(content)

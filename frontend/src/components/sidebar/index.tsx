@@ -17,11 +17,13 @@ import { IRoute } from 'types/navigation';
 import { useContext } from 'react';
 import { ConfiguratorContext } from 'contexts/ConfiguratorContext';
 import Image from 'next/image';
+import { useMe } from 'lib/useMe';
 
 function SidebarHorizon(props: { routes: IRoute[]; [x: string]: any }) {
   const { routes, open, setOpen, variant, setHovered, hovered } = props;
   const context = useContext(ConfiguratorContext);
   const { mini } = context;
+  const me = useMe();
   return (
     <div
       className={`sm:none ${
@@ -69,7 +71,7 @@ function SidebarHorizon(props: { routes: IRoute[]; [x: string]: any }) {
                       : 'hidden'
                   }`}
                 >
-                  Horizon <span className="font-medium">PRO</span>
+                  Invoce
                 </div>
                 <div
                   className={`ml-1 mt-1 h-2.5 font-poppins text-[26px] font-bold uppercase text-navy-700 dark:text-white ${
@@ -80,7 +82,7 @@ function SidebarHorizon(props: { routes: IRoute[]; [x: string]: any }) {
                       : 'block'
                   }`}
                 >
-                  H
+                  I
                 </div>
               </div>
               <div className="mb-7 mt-[58px] h-px bg-gray-200 dark:bg-white/10" />
@@ -113,12 +115,10 @@ function SidebarHorizon(props: { routes: IRoute[]; [x: string]: any }) {
                       : 'block xl:hidden'
                   }`}
                 >
-                  <h4 className="text-base font-bold text-navy-700 dark:text-white">
-                    Adela Parkson
+                  <h4 className="break-all text-base font-bold text-navy-700 dark:text-white">
+                    {me?.email ?? '...'}
                   </h4>
-                  <p className="text-sm font-medium text-gray-600">
-                    Product Designer
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">已登录</p>
                 </div>
               </div>
             </div>

@@ -98,6 +98,14 @@ def test_parse_helpers() -> None:
     assert _parse_decimal(None) is None
 
 
+def test_ai_parse_json_lenient() -> None:
+    from app.core.ai import _parse_json_lenient
+
+    assert _parse_json_lenient('{"a": 1}') == {"a": 1}
+    assert _parse_json_lenient('```json\n{"a": 2}\n```') == {"a": 2}
+    assert _parse_json_lenient('前缀文字 {"a": 3} 后缀') == {"a": 3}
+
+
 def test_image_for(monkeypatch) -> None:
     monkeypatch.setattr("app.services.extraction.pdf_first_page_png", lambda b: b"PNG")
     img, ct = _image_for("u/x.pdf", b"%PDF")
