@@ -9,6 +9,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import Card from 'components/card';
+import Checkbox from 'components/checkbox';
 import { useMemo, useState } from 'react';
 import {
   Invoice,
@@ -83,14 +84,12 @@ export default function InvoiceTable({
       columnHelper.display({
         id: 'select',
         header: () => (
-          <input
-            type="checkbox"
-            className="h-4 w-4 cursor-pointer accent-brand-500"
+          <Checkbox
             checked={
               filtered.length > 0 &&
               filtered.every((i) => selectedIds.has(i.id))
             }
-            onChange={(e) =>
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
               onToggleAll(
                 filtered.map((i) => i.id),
                 e.target.checked,
@@ -99,11 +98,9 @@ export default function InvoiceTable({
           />
         ),
         cell: (info) => (
-          <input
-            type="checkbox"
-            className="h-4 w-4 cursor-pointer accent-brand-500"
+          <Checkbox
             checked={selectedIds.has(info.row.original.id)}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
             onChange={() => onToggleSelect(info.row.original.id)}
           />
         ),

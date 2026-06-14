@@ -1,6 +1,7 @@
 'use client';
 
 import Card from 'components/card';
+import InputField from 'components/fields/InputField';
 import { useEffect, useState } from 'react';
 import { MdDelete } from 'react-icons/md';
 import {
@@ -56,29 +57,42 @@ export default function EmailAccounts() {
 
   return (
     <Card extra="w-full p-6">
-      <h2 className="text-lg font-bold text-navy-700 dark:text-white">QQ 邮箱自动归集</h2>
+      <h2 className="text-lg font-bold text-navy-700 dark:text-white">
+        QQ 邮箱自动归集
+      </h2>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-        添加邮箱后，系统每 30 分钟自动拉取未读发票邮件（需在 QQ 邮箱「设置-账户」生成 16 位授权码）
+        添加邮箱后，系统每 30 分钟自动拉取未读发票邮件（需在 QQ
+        邮箱「设置-账户」生成 16 位授权码）
       </p>
 
-      <form onSubmit={add} className="mt-4 flex flex-col gap-3 md:flex-row">
-        <input
-          value={imapUser}
-          onChange={(e) => setImapUser(e.target.value)}
-          placeholder="QQ 邮箱号 (xxx@qq.com)"
-          className="flex-1 rounded-xl border border-gray-200 bg-white/0 p-2.5 text-sm outline-none focus:border-brand-500 dark:border-white/10 dark:text-white"
-        />
-        <input
-          value={authCode}
-          onChange={(e) => setAuthCode(e.target.value)}
-          type="password"
-          placeholder="16 位授权码"
-          className="flex-1 rounded-xl border border-gray-200 bg-white/0 p-2.5 text-sm outline-none focus:border-brand-500 dark:border-white/10 dark:text-white"
-        />
+      <form onSubmit={add} className="mt-4 flex flex-col gap-3">
+        <div className="flex flex-col gap-3 md:flex-row">
+          <InputField
+            id="imap_user"
+            label="QQ 邮箱号"
+            extra="flex-1"
+            placeholder="xxx@qq.com"
+            value={imapUser}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setImapUser(e.target.value)
+            }
+          />
+          <InputField
+            id="auth_code"
+            label="16 位授权码"
+            type="password"
+            extra="flex-1"
+            placeholder="在 QQ 邮箱设置中生成"
+            value={authCode}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setAuthCode(e.target.value)
+            }
+          />
+        </div>
         <button
           type="submit"
           disabled={busy || !imapUser || !authCode}
-          className="linear rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 dark:bg-brand-400"
+          className="linear self-start rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 dark:bg-brand-400"
         >
           {busy ? '添加中…' : '添加'}
         </button>
@@ -96,7 +110,9 @@ export default function EmailAccounts() {
             >
               <span className="text-sm font-medium text-navy-700 dark:text-white">
                 {a.imap_user}
-                <span className="ml-2 text-xs text-gray-400">{a.imap_host}</span>
+                <span className="ml-2 text-xs text-gray-400">
+                  {a.imap_host}
+                </span>
               </span>
               <button
                 type="button"

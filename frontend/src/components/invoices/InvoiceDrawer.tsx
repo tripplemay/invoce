@@ -1,5 +1,6 @@
 'use client';
 
+import InputField from 'components/fields/InputField';
 import { useEffect, useState } from 'react';
 import { MdClose } from 'react-icons/md';
 import { checkDuplicate, getPreview, updateInvoice } from 'lib/invoices';
@@ -23,7 +24,12 @@ const FIELDS: { key: keyof Invoice; label: string }[] = [
   { key: 'category', label: '归属分类' },
 ];
 
-export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props) {
+export default function InvoiceDrawer({
+  invoice,
+  open,
+  onClose,
+  onSaved,
+}: Props) {
   const [form, setForm] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState('');
   const [dupWarn, setDupWarn] = useState('');
@@ -68,9 +74,15 @@ export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props
       return;
     }
     try {
-      const r = await checkDuplicate(form.invoice_number, form.invoice_code || null, invoice.id);
+      const r = await checkDuplicate(
+        form.invoice_number,
+        form.invoice_code || null,
+        invoice.id,
+      );
       setDupWarn(
-        r.duplicate ? `该发票已于 ${r.existing_date} 录入系统，存在重复报销风险！` : '',
+        r.duplicate
+          ? `该发票已于 ${r.existing_date} 录入系统，存在重复报销风险！`
+          : '',
       );
     } catch {
       /* ignore */
@@ -104,7 +116,7 @@ export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props
   return (
     <>
       <div
-        className={`fixed inset-0 z-40 bg-black/40 transition-opacity duration-300 ${
+        className={`bg-black/40 fixed inset-0 z-40 transition-opacity duration-300 ${
           open ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
         onClick={onClose}
@@ -115,7 +127,9 @@ export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props
         }`}
       >
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-white/10">
-          <h3 className="text-lg font-bold text-navy-700 dark:text-white">发票校对</h3>
+          <h3 className="text-lg font-bold text-navy-700 dark:text-white">
+            发票校对
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -129,7 +143,11 @@ export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props
           {/* 左：原件预览（60s 预签名，自动续签） */}
           <div className="min-h-[300px] border-b border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-navy-900 md:border-b-0 md:border-r">
             {preview ? (
-              <iframe title="发票原件" src={preview} className="h-full min-h-[400px] w-full" />
+              <iframe
+                title="发票原件"
+                src={preview}
+                className="h-full min-h-[400px] w-full"
+              />
             ) : (
               <div className="flex h-full min-h-[300px] items-center justify-center text-center text-sm text-gray-400">
                 <div>
@@ -156,23 +174,18 @@ export default function InvoiceDrawer({ invoice, open, onClose, onSaved }: Props
               {FIELDS.map((f) => {
                 const isNumber = f.key === 'invoice_number';
                 return (
-                  <div key={f.key}>
-                    <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-                      {f.label}
-                    </label>
-                    <input
-                      value={form[f.key] ?? ''}
-                      onChange={(e) =>
-                        setForm((prev) => ({ ...prev, [f.key]: e.target.value }))
-                      }
-                      onBlur={isNumber ? handleNumberBlur : undefined}
-                      className={`w-full rounded-xl border bg-white/0 p-2.5 text-sm outline-none dark:text-white ${
-                        isNumber && dupWarn
-                          ? 'border-red-500 text-red-600'
-                          : 'border-gray-200 focus:border-brand-500 dark:border-white/10'
-                      }`}
-                    />
-                  </div>
+                  <InputField
+                    key={f.key}
+                    id={f.key}
+                    label={f.label}
+                    placeholder={f.label}
+                    value={form[f.key] ?? ''}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setForm((prev) => ({ ...prev, [f.key]: e.target.value }))
+                    }
+                    onBlur={isNumber ? handleNumberBlur : undefined}
+                    state={isNumber && dupWarn ? 'error' : undefined}
+                  />
                 );
               })}
             </div>
