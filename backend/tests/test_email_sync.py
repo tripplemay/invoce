@@ -76,6 +76,63 @@ async def test_ingest_ignores_non_invoice(db_session, mock_storage) -> None:
     assert total == 0
 
 
+def _inline_image_email(payload: bytes) -> bytes:
+    """无附件、仅 HTML 内嵌 base64 图的发票邮件（用于校验附件优先 / 小图过滤）。"""
+    import base64
+
+    b64 = base64.b64encode(payload).decode()
+    html = f'<html><body>发票<img src="data:image/png;base64,{b64}"/></body></html>'
+    m = EmailMessage()
+    m["Subject"] = "电子发票"
+    m["From"] = "billing@corp.com"
+    m.set_content("请查收发票")
+    m.add_alternative(html, subtype="html")
+    return m.as_bytes()
+
+
+async def test_ingest_dedup_same_file(db_session, mock_storage) -> None:
+    """同一封发票邮件重复 ingest：第二次靠 file_key 去重，不再新建发票行。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    s1, c1 = await email_sync.ingest_email(db_session, acct, _invoice_email(), enqueue)
+    s2, c2 = await email_sync.ingest_email(db_session, acct, _invoice_email(), enqueue)
+    assert (s1, c1) == ("SUCCESS", 1)
+    assert (s2, c2) == ("SUCCESS", 0)  # 第二次去重，0 新增
+    total = await db_session.scalar(select(func.count()).select_from(Invoice))
+    assert total == 1
+
+
+async def test_ingest_drops_tiny_inline_image(db_session, mock_storage) -> None:
+    """无附件 + 内嵌小图（logo/像素）应被过滤，不产生发票。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    raw = _inline_image_email(b"\x89PNG\r\n" + b"x" * 200)  # < MIN_IMAGE_BYTES
+    status, count = await email_sync.ingest_email(db_session, acct, raw, enqueue)
+    assert (status, count) == ("SUCCESS", 0)
+    total = await db_session.scalar(select(func.count()).select_from(Invoice))
+    assert total == 0
+
+
+async def test_ingest_keeps_large_inline_image(db_session, mock_storage) -> None:
+    """无附件但有足够大的内嵌图（真实图片发票）时，回退提取并入库。"""
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    raw = _inline_image_email(b"\x89PNG\r\n" + b"x" * (email_sync.MIN_IMAGE_BYTES + 100))
+    status, count = await email_sync.ingest_email(db_session, acct, raw, enqueue)
+    assert (status, count) == ("SUCCESS", 1)
+    assert len(enq) == 1
+
+
 async def test_sync_account_updates_uid(db_session, mock_storage) -> None:
     acct = await _make_account(db_session)
     enq: list[str] = []
@@ -90,3 +147,39 @@ async def test_sync_account_updates_uid(db_session, mock_storage) -> None:
     assert total == 1  # 一封发票 + 一封被忽略
     await db_session.refresh(acct)
     assert acct.last_sync_uid == 12
+
+
+async def test_sync_account_fetch_failure_holds_watermark(db_session, mock_storage) -> None:
+    """高 UID 取信失败(raw 空)时，水位线只停在上一个成功 UID，不越过失败封。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    async def fetcher(account):
+        return [(10, _invoice_email()), (12, b"")]  # 12 取信失败
+
+    total = await email_sync.sync_account(db_session, acct, enqueue, fetcher=fetcher)
+    assert total == 1
+    await db_session.refresh(acct)
+    assert acct.last_sync_uid == 10  # 不越过失败的 12，下轮会重试
+
+
+async def test_sync_account_low_failure_blocks_but_processes_higher(
+    db_session, mock_storage
+) -> None:
+    """低 UID 失败应阻止水位线推进，但更高 UID 的发票仍被处理入库（不阻塞新发票）。"""
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    async def fetcher(account):
+        return [(10, b""), (12, _invoice_email())]  # 10 失败，12 成功
+
+    total = await email_sync.sync_account(db_session, acct, enqueue, fetcher=fetcher)
+    assert total == 1  # 12 仍入库
+    assert len(enq) == 1
+    await db_session.refresh(acct)
+    assert not acct.last_sync_uid  # 水位线不越过失败的 10，保持初始

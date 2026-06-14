@@ -73,7 +73,15 @@ def extract_attachments(msg: Message) -> list[tuple[bytes, str]]:
         ctype = part.get_content_type()
         if ctype not in ALLOWED_TYPES:
             continue
-        if part.get_content_disposition() == "attachment" or part.get_filename():
+        disposition = part.get_content_disposition()
+        # PDF 几乎只作为真实发票附件出现：附件或带文件名都收。
+        # 图片只收“真正的附件”（disposition=attachment），排除 HTML 内联 cid 图
+        # （签名/logo/banner 常用 Content-Disposition: inline + 文件名引用，会被误当发票）。
+        if ctype == "application/pdf":
+            keep = disposition == "attachment" or bool(part.get_filename())
+        else:
+            keep = disposition == "attachment"
+        if keep:
             payload = part.get_payload(decode=True)
             if isinstance(payload, bytes | bytearray):
                 files.append((bytes(payload), _norm_ctype(ctype)))
