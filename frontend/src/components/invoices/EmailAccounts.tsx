@@ -1,5 +1,6 @@
 'use client';
 
+import Button from 'components/button';
 import Card from 'components/card';
 import InputField from 'components/fields/InputField';
 import { useEffect, useState } from 'react';
@@ -89,13 +90,13 @@ export default function EmailAccounts() {
             }
           />
         </div>
-        <button
+        <Button
           type="submit"
+          className="self-start"
           disabled={busy || !imapUser || !authCode}
-          className="linear self-start rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 dark:bg-brand-400"
         >
           {busy ? '添加中…' : '添加'}
-        </button>
+        </Button>
       </form>
       {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
 

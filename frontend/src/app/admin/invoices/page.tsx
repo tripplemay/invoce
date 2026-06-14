@@ -1,4 +1,5 @@
 'use client';
+import Button from 'components/button';
 import InvoiceDrawer from 'components/invoices/InvoiceDrawer';
 import InvoiceTable from 'components/invoices/InvoiceTable';
 import { useCallback, useEffect, useState } from 'react';
@@ -91,13 +92,7 @@ export default function InvoicesPage() {
           <span className="text-sm font-medium text-brand-700 dark:text-brand-300">
             已选 {checked.size} 张发票
           </span>
-          <button
-            type="button"
-            onClick={() => setShowModal(true)}
-            className="linear rounded-xl bg-brand-500 px-5 py-2 text-sm font-medium text-white hover:bg-brand-600 dark:bg-brand-400"
-          >
-            导出报销单
-          </button>
+          <Button onClick={() => setShowModal(true)}>导出报销单</Button>
         </div>
       )}
 
@@ -132,30 +127,29 @@ export default function InvoicesPage() {
               {checked.size} 张发票状态变更为「报销中」？
             </p>
             <div className="mt-6 flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => doExport(true)}
+              <Button
+                className="w-full"
                 disabled={exporting}
-                className="linear w-full rounded-xl bg-brand-500 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 dark:bg-brand-400"
+                onClick={() => doExport(true)}
               >
                 {exporting ? '导出中…' : '导出并标记为「报销中」'}
-              </button>
-              <button
-                type="button"
-                onClick={() => doExport(false)}
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full"
                 disabled={exporting}
-                className="w-full rounded-xl border border-gray-200 py-2.5 text-sm font-medium text-navy-700 hover:bg-gray-50 disabled:opacity-50 dark:border-white/10 dark:text-white dark:hover:bg-navy-700"
+                onClick={() => doExport(false)}
               >
                 仅导出，不改状态
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowModal(false)}
+              </Button>
+              <Button
+                variant="ghost"
+                className="w-full"
                 disabled={exporting}
-                className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
+                onClick={() => setShowModal(false)}
               >
                 取消
-              </button>
+              </Button>
             </div>
           </div>
         </div>

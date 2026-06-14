@@ -20,28 +20,30 @@ import Image from 'next/image';
 import { MdSettings } from 'react-icons/md';
 import ConfiguratorRadio from './ConfiguratorRadio';
 
-// 精简版 Configurator：仅保留外观（亮/暗）与侧边栏（默认/最小化）。
-// props 接口保持不变（mini/setMini/theme/setTheme/darkmode/setDarkmode），
-// theme/setTheme 不再使用但仍接收，故经由 props.* 访问以避免 eslint 未使用变量告警。
-export default function HeaderLinks(props: { [x: string]: any }) {
-  const { darkmode, setDarkmode } = props;
-  //eslint-disable-next-line
+// 外观设置面板：仅保留两项真实功能——主题（浅色/深色）与侧边栏（展开/收起）。
+// 用 darkmode prop 驱动选中态与预览图，避免在 render 中读取 document（SSR/水合反模式）。
+export default function Configurator(props: {
+  mini: boolean;
+  setMini: (value: boolean) => void;
+  darkmode: boolean;
+  setDarkmode: (value: boolean) => void;
+  theme?: any; // navbar 透传但本面板未使用
+  setTheme?: any;
+}) {
+  const { mini, setMini, darkmode, setDarkmode } = props;
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const btnRef = React.useRef();
+  const btnRef = React.useRef<HTMLButtonElement>(null);
   return (
     <>
       <button
         ref={btnRef}
+        aria-label="外观设置"
         className="h-[18px] min-h-[unset] w-max min-w-[unset] bg-none p-0"
         onClick={onOpen}
       >
         <MdSettings className="h-[18px] w-[18px] text-gray-400 dark:text-white" />
       </button>
-      <Drawer
-        isOpen={isOpen}
-        onClose={onClose}
-        placement={document.documentElement.dir === 'rtl' ? 'left' : 'right'}
-      >
+      <Drawer isOpen={isOpen} onClose={onClose} placement="right">
         <DrawerContent className="my-4 ml-0 mr-4 w-[calc(100vw_-_32px)] max-w-[calc(100vw_-_32px)] rounded-2xl bg-white shadow-[-20px_17px_40px_4px_rgba(112,_144,_176,_0.18)] dark:bg-navy-800 dark:shadow-[-22px_32px_51px_4px_#0B1437] sm:ml-4 md:w-[400px] md:max-w-[400px]">
           <DrawerHeader
             px="28px"
@@ -61,10 +63,10 @@ export default function HeaderLinks(props: { [x: string]: any }) {
               </div>
               <div>
                 <p className="text-xl font-bold text-gray-900 dark:text-white">
-                  Configurator
+                  外观设置
                 </p>
                 <p className="text-md flex font-medium text-gray-600">
-                  Invoce 外观
+                  主题与侧边栏
                 </p>
               </div>
             </div>
@@ -80,7 +82,7 @@ export default function HeaderLinks(props: { [x: string]: any }) {
           >
             <div className="flex flex-col">
               <p className="mb-3 font-bold text-gray-900 dark:text-white">
-                Color Mode
+                主题模式
               </p>
               <div className="mb-7 flex w-full justify-between gap-5">
                 <ConfiguratorRadio
@@ -90,12 +92,10 @@ export default function HeaderLinks(props: { [x: string]: any }) {
                       setDarkmode(false);
                     }
                   }}
-                  active={
-                    document.body.classList.contains('dark') ? false : true
-                  }
+                  active={!darkmode}
                   label={
                     <p className="font-bold text-gray-900 dark:text-white">
-                      Light
+                      浅色
                     </p>
                   }
                 >
@@ -105,7 +105,7 @@ export default function HeaderLinks(props: { [x: string]: any }) {
                       style={{ objectFit: 'contain' }}
                       className="max-w-[130px] rounded-lg"
                       src={Light}
-                      alt="avatar"
+                      alt="浅色主题预览"
                     />
                   </div>
                 </ConfiguratorRadio>
@@ -116,12 +116,10 @@ export default function HeaderLinks(props: { [x: string]: any }) {
                       setDarkmode(true);
                     }
                   }}
-                  active={
-                    !document.body.classList.contains('dark') ? false : true
-                  }
+                  active={darkmode}
                   label={
                     <p className="font-bold text-gray-900 dark:text-white">
-                      Dark
+                      深色
                     </p>
                   }
                 >
@@ -130,63 +128,51 @@ export default function HeaderLinks(props: { [x: string]: any }) {
                       fill
                       style={{ objectFit: 'contain' }}
                       className="max-w-[130px] rounded-lg"
-                      alt=""
+                      alt="深色主题预览"
                       src={Dark}
                     />
                   </div>
                 </ConfiguratorRadio>
               </div>
               <p className="mb-3 font-bold text-gray-900 dark:text-white">
-                Sidebar
+                侧边栏
               </p>
               <div className="mb-7 flex w-full justify-between gap-5">
                 <ConfiguratorRadio
-                  onClick={() => props.setMini(false)}
-                  active={props.mini === true ? false : true}
+                  onClick={() => setMini(false)}
+                  active={!mini}
                   label={
                     <p className="font-bold text-gray-900 dark:text-white">
-                      Default
+                      展开
                     </p>
                   }
                 >
-                  <div
-                    className={`relative flex min-h-[126px] w-[130px] items-center justify-center overflow-hidden rounded-[10px] border-[1px] border-gray-200 bg-gray-100 bg-repeat pl-2.5 pt-2.5 dark:border-[#323B5D] dark:bg-navy-900`}
-                  >
+                  <div className="relative flex min-h-[126px] w-[130px] items-center justify-center overflow-hidden rounded-[10px] border-[1px] border-gray-200 bg-gray-100 bg-repeat pl-2.5 pt-2.5 dark:border-[#323B5D] dark:bg-navy-900">
                     <Image
                       fill
                       style={{ objectFit: 'contain' }}
                       className="mx-auto my-auto max-h-[70px] max-w-full rounded-md shadow-[0px_6px_14px_rgba(200,_207,_215,_0.6)] dark:shadow-none md:max-w-[96px]"
-                      alt=""
-                      src={
-                        document.body.classList.contains('dark')
-                          ? DefaultSidebarDark
-                          : DefaultSidebar
-                      }
+                      alt="展开侧边栏预览"
+                      src={darkmode ? DefaultSidebarDark : DefaultSidebar}
                     />
                   </div>
                 </ConfiguratorRadio>
                 <ConfiguratorRadio
-                  onClick={() => props.setMini(true)}
-                  active={props.mini === false ? false : true}
+                  onClick={() => setMini(true)}
+                  active={mini}
                   label={
                     <p className="font-bold text-gray-900 dark:text-white">
-                      Minimized
+                      收起
                     </p>
                   }
                 >
-                  <div
-                    className={`relative flex min-h-[126px] w-[130px] items-center justify-center overflow-hidden rounded-[10px] border-[1px] border-gray-200 bg-gray-100 bg-repeat pl-2.5 pt-2.5 dark:border-[#323B5D] dark:bg-navy-900`}
-                  >
+                  <div className="relative flex min-h-[126px] w-[130px] items-center justify-center overflow-hidden rounded-[10px] border-[1px] border-gray-200 bg-gray-100 bg-repeat pl-2.5 pt-2.5 dark:border-[#323B5D] dark:bg-navy-900">
                     <Image
                       fill
                       style={{ objectFit: 'contain' }}
                       className="mx-auto my-auto max-h-[70px] max-w-full rounded-md shadow-[0px_6px_14px_rgba(200,_207,_215,_0.6)] dark:shadow-none md:max-w-[75px]"
-                      alt=""
-                      src={
-                        document.body.classList.contains('dark')
-                          ? MiniSidebarDark
-                          : MiniSidebar
-                      }
+                      alt="收起侧边栏预览"
+                      src={darkmode ? MiniSidebarDark : MiniSidebar}
                     />
                   </div>
                 </ConfiguratorRadio>

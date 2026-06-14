@@ -1,5 +1,6 @@
 'use client';
 
+import Button from 'components/button';
 import InputField from 'components/fields/InputField';
 import { useEffect, useState } from 'react';
 import { MdClose } from 'react-icons/md';
@@ -189,14 +190,14 @@ export default function InvoiceDrawer({
                 );
               })}
             </div>
-            <button
-              type="button"
+            <Button
+              size="lg"
+              className="mt-6 w-full"
               onClick={handleSave}
               disabled={saving || Boolean(dupWarn)}
-              className="linear mt-6 w-full rounded-xl bg-brand-500 py-3 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-400"
             >
               {saving ? '保存中…' : '确认入库'}
-            </button>
+            </Button>
           </div>
         </div>
       </aside>
