@@ -143,6 +143,7 @@ async def sync_account(
     fetcher: Fetcher = fetch_unseen_messages,
 ) -> int:
     """同步单个邮箱，返回新增发票数。更新 last_sync_uid。"""
+    user_id = account.user_id  # 提前捕获，避免 rollback 后访问过期 ORM 属性
     messages = await fetcher(account)
     total = 0
     max_uid = account.last_sync_uid or 0
@@ -154,7 +155,7 @@ async def sync_account(
             await session.rollback()
             session.add(
                 EmailSyncLog(
-                    user_id=account.user_id,
+                    user_id=user_id,
                     sender="",
                     subject="(解析失败)",
                     status=EmailSyncStatus.FAILED.value,
@@ -181,13 +182,14 @@ async def sync_all(ctx: dict) -> str:
             await session.scalars(select(EmailAccount).where(EmailAccount.enabled.is_(True)))
         ).all()
         for account in accounts:
+            account_user_id = account.user_id  # 提前捕获，避免 rollback 后属性过期
             try:
                 await sync_account(session, account, enqueue)
             except Exception as exc:  # noqa: BLE001 连接失败记录日志，继续下一个
                 await session.rollback()
                 session.add(
                     EmailSyncLog(
-                        user_id=account.user_id,
+                        user_id=account_user_id,
                         sender="",
                         subject="(连接失败)",
                         status=EmailSyncStatus.FAILED.value,

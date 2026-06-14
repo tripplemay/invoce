@@ -19,6 +19,7 @@ def _parse_json_lenient(text: str) -> dict:
             raise
         return json.loads(match.group(0))
 
+
 EXTRACT_SYSTEM_PROMPT = """你是专业的中国发票信息抽取助手。请从用户提供的发票图片中提取结构化字段，并**只**返回 JSON，不要任何解释。
 
 字段要求：
