@@ -1,5 +1,7 @@
 """AI 抽取流程测试（网关/S3/PDF 已 mock）。"""
 
+import httpx
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
@@ -96,6 +98,70 @@ def test_parse_helpers() -> None:
     assert str(_parse_decimal("12.50")) == "12.50"
     assert _parse_decimal("abc") is None
     assert _parse_decimal(None) is None
+
+
+class _FakeResp:
+    def __init__(self, status: int, payload: object = None) -> None:
+        self.status_code = status
+        self._payload = payload
+
+    def json(self) -> object:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(
+                "err", request=httpx.Request("POST", "http://x"), response=self
+            )
+
+
+def _fake_client_factory(statuses: list[int]):
+    """构造一个按 statuses 顺序返回响应的假 httpx.AsyncClient。"""
+    calls = {"n": 0}
+
+    class _Client:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a) -> bool:
+            return False
+
+        async def post(self, *a, **k):
+            i = calls["n"]
+            calls["n"] += 1
+            status = statuses[i]
+            if status == 200:
+                return _FakeResp(
+                    200, {"choices": [{"message": {"content": '{"seller_name":"x"}'}}]}
+                )
+            return _FakeResp(status)
+
+    return _Client, calls
+
+
+async def test_ai_retries_on_rate_limit(monkeypatch) -> None:
+    """限流(402)后退避重试，最终成功。"""
+    from app.core import ai
+
+    client_cls, calls = _fake_client_factory([402, 200])
+    monkeypatch.setattr(httpx, "AsyncClient", client_cls)
+    result = await ai.extract_invoice_fields(b"img", "image/png")
+    assert result == {"seller_name": "x"}
+    assert calls["n"] == 2  # 首次 402 重试，第二次成功
+
+
+async def test_ai_raises_on_non_retryable(monkeypatch) -> None:
+    """非限流错误(400)立即抛出，不重试。"""
+    from app.core import ai
+
+    client_cls, calls = _fake_client_factory([400, 400])
+    monkeypatch.setattr(httpx, "AsyncClient", client_cls)
+    with pytest.raises(httpx.HTTPStatusError):
+        await ai.extract_invoice_fields(b"img", "image/png")
+    assert calls["n"] == 1  # 400 不重试
 
 
 def test_ai_parse_json_lenient() -> None:

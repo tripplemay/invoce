@@ -133,6 +133,69 @@ async def test_ingest_keeps_large_inline_image(db_session, mock_storage) -> None
     assert len(enq) == 1
 
 
+def _meituan_email() -> bytes:
+    """美团式邮件：真发票 PDF + 行程单 PDF（行程单应被剔除）。"""
+    m = EmailMessage()
+    m["Subject"] = "美团出行电子发票及行程报销单"
+    m["From"] = "noreply@meituan.com"
+    m.set_content("请查收")
+    m.add_attachment(
+        b"%PDF-invoice", maintype="application", subtype="pdf", filename="电子发票1.pdf"
+    )
+    m.add_attachment(b"%PDF-trip", maintype="application", subtype="pdf", filename="行程单.pdf")
+    return m.as_bytes()
+
+
+def _toll_zip_email() -> bytes:
+    """通行费式邮件：发票在 zip 内（pdf/ 两张），外加汇总单噪音 PDF。"""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("pdf/1_inv.pdf", b"%PDF-A")
+        z.writestr("pdf/2_inv.pdf", b"%PDF-B")
+        z.writestr("ofd/1_inv.ofd", b"OFD")
+    m = EmailMessage()
+    m["Subject"] = "通行费电子发票"
+    m["From"] = "noreply@toll.com"
+    m.set_content("请查收")
+    m.add_attachment(
+        buf.getvalue(), maintype="application", subtype="zip", filename="通行费电子发票.zip"
+    )
+    m.add_attachment(
+        b"%PDF-sum",
+        maintype="application",
+        subtype="pdf",
+        filename="通行费电子票据汇总单(票据).pdf",
+    )
+    return m.as_bytes()
+
+
+async def test_ingest_meituan_keeps_only_invoice(db_session, mock_storage) -> None:
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    status, count = await email_sync.ingest_email(db_session, acct, _meituan_email(), enqueue)
+    assert (status, count) == ("SUCCESS", 1)  # 行程单被剔除，只入真发票
+    assert len(enq) == 1
+
+
+async def test_ingest_toll_extracts_zip_invoices(db_session, mock_storage) -> None:
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    status, count = await email_sync.ingest_email(db_session, acct, _toll_zip_email(), enqueue)
+    assert (status, count) == ("SUCCESS", 2)  # zip 内 2 张发票；汇总单被剔除
+    assert len(enq) == 2
+
+
 async def test_sync_account_updates_uid(db_session, mock_storage) -> None:
     acct = await _make_account(db_session)
     enq: list[str] = []

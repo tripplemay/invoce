@@ -30,6 +30,81 @@ def test_extract_attachments() -> None:
     assert data == b"%PDF-1.4 fake"
 
 
+def test_extract_attachments_skips_noise() -> None:
+    """同邮件含真发票 + 行程单时，只取发票，跳过行程单/汇总单等噪音文件。"""
+    m = EmailMessage()
+    m["Subject"] = "美团出行电子发票及行程报销单"
+    m.set_content("请查收")
+    m.add_attachment(b"%PDF-real", maintype="application", subtype="pdf", filename="电子发票1.pdf")
+    m.add_attachment(b"%PDF-trip", maintype="application", subtype="pdf", filename="行程单.pdf")
+    m.add_attachment(
+        b"%PDF-sum", maintype="application", subtype="pdf", filename="汇总单(行程).pdf"
+    )
+    files = email_parse.extract_attachments(m)
+    assert files == [(b"%PDF-real", "application/pdf")]
+
+
+def test_extract_zip_pdfs() -> None:
+    """从 zip 中只取 pdf/ 下的发票 PDF，忽略 ofd/xml，并跳过 zip 内的汇总单。"""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("pdf/1_invoice.pdf", b"%PDF-A")
+        z.writestr("pdf/2_invoice.pdf", b"%PDF-B")
+        z.writestr("ofd/1_invoice.ofd", b"OFDDATA")
+        z.writestr("xml/1_invoice.xml", b"<xml/>")
+        z.writestr("通行费电子票据汇总单.pdf", b"%PDF-noise")
+    m = EmailMessage()
+    m["Subject"] = "通行费电子发票"
+    m.set_content("请查收")
+    m.add_attachment(
+        buf.getvalue(), maintype="application", subtype="zip", filename="通行费电子发票.zip"
+    )
+    files = email_parse.extract_zip_pdfs(m)
+    assert sorted(d for d, _ in files) == [b"%PDF-A", b"%PDF-B"]
+    assert all(ct == "application/pdf" for _, ct in files)
+
+
+def test_extract_attachments_octet_stream_pdf() -> None:
+    """声明为 application/octet-stream 的 PDF 也能按魔数识别并收下。"""
+    m = EmailMessage()
+    m["Subject"] = "电子发票"
+    m.set_content("请查收")
+    m.add_attachment(
+        b"%PDF-1.4 data", maintype="application", subtype="octet-stream", filename="电子发票1.pdf"
+    )
+    assert email_parse.extract_attachments(m) == [(b"%PDF-1.4 data", "application/pdf")]
+
+
+def test_extract_zip_noise_parent_dir_and_no_suffix() -> None:
+    """zip 以 octet-stream + 无 .zip 后缀投递时按魔数识别；真发票在含噪音词父目录下仍按 basename 保留。"""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("行程报销批次/pdf/真发票001.pdf", b"%PDF-real")
+        z.writestr("行程报销批次/行程单.pdf", b"%PDF-noise")
+    m = EmailMessage()
+    m["Subject"] = "电子发票"
+    m.set_content("请查收")
+    m.add_attachment(
+        buf.getvalue(), maintype="application", subtype="octet-stream", filename="通行费电子发票"
+    )
+    # 父目录“行程报销批次”不应误伤真发票；basename 为“行程单.pdf”的才被剔除
+    assert email_parse.extract_zip_pdfs(m) == [(b"%PDF-real", "application/pdf")]
+
+
+def test_is_noise_filename() -> None:
+    assert email_parse.is_noise_filename("通行费电子票据汇总单(票据).pdf")
+    assert email_parse.is_noise_filename("悦道用车行程单.pdf")
+    assert email_parse.is_noise_filename("信用卡电子账单.pdf")
+    assert not email_parse.is_noise_filename("悦道用车电子发票1.pdf")
+    assert not email_parse.is_noise_filename(None)
+
+
 def test_extract_inline_base64_images() -> None:
     raw = base64.b64encode(b"PNGDATA").decode()
     html = f'<html><body>发票<img src="data:image/png;base64,{raw}"/></body></html>'

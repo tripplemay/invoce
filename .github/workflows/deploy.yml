@@ -90,11 +90,19 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             export GH_REPO="${{ needs.build-and-push.outputs.repo_lc }}"
             export IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+            # 拉取前先腾空间：清理 invoce 旧镜像(运行中的会被自动跳过)+悬空层+构建缓存，
+            # 避免与 kolmatrix 共用的磁盘被占满导致 pull 解压失败（绝不动其它项目镜像）。
+            docker images "ghcr.io/${GH_REPO}/api" "ghcr.io/${GH_REPO}/frontend" --format '{{.Repository}}:{{.Tag}}' | grep -vE ":(latest|${IMAGE_TAG})$" | xargs -r docker rmi -f 2>/dev/null || true
+            docker image prune -f || true
+            docker builder prune -f || true
             docker compose -f docker-compose.prod.yml pull
             # 先迁移，后重启（单副本，无竞态）
             docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
             docker compose -f docker-compose.prod.yml up -d
+            # 让 :latest 跟随本次部署，手动运维一次性任务(docker compose run)时即可取到最新代码
+            docker tag "ghcr.io/${GH_REPO}/api:${IMAGE_TAG}" "ghcr.io/${GH_REPO}/api:latest" || true
+            docker tag "ghcr.io/${GH_REPO}/frontend:${IMAGE_TAG}" "ghcr.io/${GH_REPO}/frontend:latest" || true
             docker logout ghcr.io || true
-            # 仅清理 invoce 自己的旧镜像 + 悬空镜像（此机与 kolmatrix 共用，绝不动其它项目）
+            # 部署后再清理被替换下来的旧 sha 镜像（仅 invoce 自己的；:latest 与本次 sha 保留）
             docker images "ghcr.io/${GH_REPO}/api" "ghcr.io/${GH_REPO}/frontend" --format '{{.Repository}}:{{.Tag}}' | grep -vE ":(latest|${IMAGE_TAG})$" | xargs -r docker rmi -f 2>/dev/null || true
             docker image prune -f || true

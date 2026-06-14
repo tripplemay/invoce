@@ -1,11 +1,17 @@
-"""邮件解析（纯函数，可测）：关键词匹配 + 提取发票文件（附件 / HTML 内嵌 Base64 图 / 外链图 URL）。"""
+"""邮件解析（纯函数，可测）：关键词匹配 + 提取标准发票文件（松散附件 / zip 内 PDF / 内嵌 Base64 图）。"""
 
 import base64
+import io
 import re
+import zipfile
 from email.header import decode_header
 from email.message import Message
 
 KEYWORDS = ("发票", "电子发票", "行程单", "invoice")
+
+# 非标准发票的噪音文件名关键词：汇总单 / 行程单·行程报销单 / 报销单 / 账单 / 对账单 等都不是标准发票，
+# 这类松散附件常与真发票同邮件出现（如美团“电子发票+行程单”、通行费“发票zip+汇总单”），需按文件名剔除。
+_NOISE_FILENAME_KEYWORDS = ("汇总单", "行程", "报销单", "账单", "对账")
 
 ALLOWED_TYPES = {
     "application/pdf": ".pdf",
@@ -13,6 +19,45 @@ ALLOWED_TYPES = {
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
 }
+
+# zip 解压防护：避免畸形/恶意 zip 撑爆内存（原始包大小 / 扫描条目数 / 单 PDF / 聚合解压总量 / 取数）。
+_MAX_ZIP_RAW_BYTES = 64 * 1024 * 1024
+_MAX_ZIP_ENTRIES = 500
+_MAX_ZIP_PDF_BYTES = 30 * 1024 * 1024
+_MAX_ZIP_TOTAL_BYTES = 120 * 1024 * 1024
+_MAX_ZIP_PDFS = 200
+
+
+def is_noise_filename(filename: str | None) -> bool:
+    """文件名是否为非标准发票（汇总单/行程单/账单等）。判定只看文件名本身（已 basename）。"""
+    if not filename:
+        return False
+    return any(k in filename for k in _NOISE_FILENAME_KEYWORDS)
+
+
+def _sniff_type(data: bytes) -> str | None:
+    """按文件魔数识别类型，不信任邮件声明的 Content-Type（国产发票平台常用 octet-stream）。"""
+    if data[:4] == b"%PDF":
+        return "application/pdf"
+    if data[:4] == b"PK\x03\x04":
+        return "application/zip"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    return None
+
+
+def _zip_member_basename(info: "zipfile.ZipInfo") -> str:
+    """取 zip 条目的真实文件名（basename）：非 UTF-8 标志位时 zipfile 用 cp437 解码，需还原成 gbk。"""
+    name = info.filename
+    if not (info.flag_bits & 0x800):
+        try:
+            name = name.encode("cp437").decode("gbk")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
 
 _DATA_URI_RE = re.compile(r"data:(image/(?:png|jpe?g));base64,([A-Za-z0-9+/=\s]+)", re.IGNORECASE)
 _IMG_SRC_RE = re.compile(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', re.IGNORECASE)
@@ -68,23 +113,78 @@ def html_parts(msg: Message) -> list[str]:
 
 
 def extract_attachments(msg: Message) -> list[tuple[bytes, str]]:
+    """提取松散的 PDF / 图片发票附件。
+
+    按文件魔数识别类型（不信任声明的 Content-Type，国产发票平台常以 octet-stream 投递），
+    跳过汇总单/行程单/账单等噪音文件名；zip 附件交由 extract_zip_pdfs 处理。
+    """
     files: list[tuple[bytes, str]] = []
     for part in msg.walk():
-        ctype = part.get_content_type()
-        if ctype not in ALLOWED_TYPES:
+        if part.is_multipart():
             continue
+        raw_fn = part.get_filename()
+        filename = decode_mime_header(raw_fn) if raw_fn else None
         disposition = part.get_content_disposition()
-        # PDF 几乎只作为真实发票附件出现：附件或带文件名都收。
-        # 图片只收“真正的附件”（disposition=attachment），排除 HTML 内联 cid 图
-        # （签名/logo/banner 常用 Content-Disposition: inline + 文件名引用，会被误当发票）。
-        if ctype == "application/pdf":
-            keep = disposition == "attachment" or bool(part.get_filename())
-        else:
-            keep = disposition == "attachment"
-        if keep:
-            payload = part.get_payload(decode=True)
-            if isinstance(payload, bytes | bytearray):
-                files.append((bytes(payload), _norm_ctype(ctype)))
+        # 只看“附件类”部件：显式 attachment 或带文件名（排除正文 text 部件）。
+        if disposition != "attachment" and not filename:
+            continue
+        if is_noise_filename(filename):
+            continue
+        payload = part.get_payload(decode=True)
+        if not isinstance(payload, bytes | bytearray) or not payload:
+            continue
+        data = bytes(payload)
+        sniffed = _sniff_type(data)
+        if sniffed == "application/pdf":
+            files.append((data, "application/pdf"))
+        elif sniffed in ("image/png", "image/jpeg") and disposition == "attachment":
+            # 图片仅收真正的附件，排除 HTML 内联 cid 图（签名/logo/banner 常被误当发票）。
+            files.append((data, sniffed))
+        # zip / 其它类型在此忽略。
+    return files
+
+
+def extract_zip_pdfs(msg: Message) -> list[tuple[bytes, str]]:
+    """从 zip 附件中解出标准发票 PDF。
+
+    中国电子发票常把同一批发票的 pdf/ofd/xml 打包成 zip（如通行费电子发票.zip，一个 zip 可能含多张发票）。
+    只取其中的 PDF（OFD/XML 忽略，PDF 足够 AI 识别），并按文件名跳过 zip 内的汇总单/行程单等噪音。
+    """
+    files: list[tuple[bytes, str]] = []
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        payload = part.get_payload(decode=True)
+        if not isinstance(payload, bytes | bytearray):
+            continue
+        data = bytes(payload)
+        # 按魔数识别 zip（不依赖 Content-Type / .zip 后缀），并卡住原始包大小防超大中央目录撑爆内存。
+        if data[:4] != b"PK\x03\x04" or len(data) > _MAX_ZIP_RAW_BYTES:
+            continue
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(data))
+            infos = archive.infolist()[:_MAX_ZIP_ENTRIES]
+        except (zipfile.BadZipFile, OSError):
+            continue
+        total = 0
+        for info in infos:
+            member = _zip_member_basename(info)
+            if not member.lower().endswith(".pdf") or is_noise_filename(member):
+                continue
+            if info.file_size > _MAX_ZIP_PDF_BYTES:
+                continue  # 防 zip 炸弹：跳过解压后异常大的条目
+            try:
+                pdf = archive.read(info)
+            except (zipfile.BadZipFile, RuntimeError, OSError):
+                continue  # 加密/损坏的条目跳过，不阻断其它发票
+            if not pdf:
+                continue
+            total += len(pdf)
+            if total > _MAX_ZIP_TOTAL_BYTES:
+                break  # 单 zip 聚合解压超预算，停止
+            files.append((pdf, "application/pdf"))
+            if len(files) >= _MAX_ZIP_PDFS:
+                break
     return files
 
 

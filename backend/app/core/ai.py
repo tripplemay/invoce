@@ -1,5 +1,6 @@
 """AI 抽取客户端：抽象指向 AIGC 聚合网关（OpenAI 兼容 HTTP），不绑定任何原生 SDK。"""
 
+import asyncio
 import base64
 import json
 import re
@@ -7,6 +8,10 @@ import re
 import httpx
 
 from app.core.config import settings
+
+# 限流/瞬时错误状态码：网关在突发并发下用 402(配额)/429(限流)/5xx 回绝，退避重试即可恢复。
+_RETRYABLE_STATUS = frozenset({402, 408, 429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 5
 
 
 def _parse_json_lenient(text: str) -> dict:
@@ -56,13 +61,27 @@ async def extract_invoice_fields(image_bytes: bytes, content_type: str) -> dict:
         "response_format": {"type": "json_object"},
         "temperature": 0,
     }
+    last_exc: Exception | None = None
     async with httpx.AsyncClient(timeout=90) as client:
-        resp = await client.post(
-            f"{settings.aigc_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.aigc_api_key}"},
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    return _parse_json_lenient(content)
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                resp = await client.post(
+                    f"{settings.aigc_base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.aigc_api_key}"},
+                    json=payload,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                return _parse_json_lenient(content)
+            except httpx.HTTPStatusError as exc:
+                # 仅对限流/瞬时状态码退避重试；其它(如 400 内容/鉴权错误)立即抛出。
+                if exc.response.status_code not in _RETRYABLE_STATUS:
+                    raise
+                last_exc = exc
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                last_exc = exc  # 网络抖动/超时也退避重试
+            if attempt < _MAX_ATTEMPTS - 1:
+                await asyncio.sleep(2**attempt)  # 1,2,4,8s 指数退避，错开并发突发
+    assert last_exc is not None
+    raise last_exc

@@ -28,8 +28,9 @@ from app.services import email_parse
 Enqueue = Callable[[str], Awaitable[None]]
 Fetcher = Callable[[EmailAccount], Awaitable[list[tuple[int, bytes]]]]
 
-# 服务端按主题中文关键词搜索（逐词单独搜，客户端并集）。仅中国发票：不含英文 Invoice。
-_SUBJECT_KEYWORDS = ("发票", "行程单")
+# 服务端按主题中文关键词搜索（逐词单独搜，客户端并集）。仅归集标准中国发票：
+# 只搜“发票”——行程单/账单等不是标准发票，不搜（同邮件里夹带的也按文件名在 ingest 处剔除）。
+_SUBJECT_KEYWORDS = ("发票",)
 # 单次增量处理的最大封数：取水位线之上“最低”一批（升序），使水位连续推进，余量留给下次。
 MAX_PER_SYNC = 100
 # 小于此字节数的图片视为 logo / 跟踪像素，丢弃；PDF 不受限。
@@ -58,9 +59,10 @@ async def ingest_email(
         await session.commit()
         return (EmailSyncStatus.IGNORED.value, 0)
 
-    # 优先取附件（中国电子发票几乎都是 PDF 附件）；无附件再回退到 HTML 内嵌 base64 图。
-    # 不再下载外链图：外链图基本是营销/跟踪图，既是噪音也是 SSRF 风险面。
+    # 取标准发票文件：松散 PDF/图附件（已剔除汇总单/行程单等噪音）+ zip 内的发票 PDF（含一封多张）。
+    # 都没有时再回退到 HTML 内嵌 base64 图。不再下载外链图：基本是营销/跟踪图，是噪音也是 SSRF 风险面。
     files = email_parse.extract_attachments(msg)
+    files += email_parse.extract_zip_pdfs(msg)
     if not files:
         for html in email_parse.html_parts(msg):
             files += email_parse.extract_inline_base64_images(html)

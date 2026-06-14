@@ -37,5 +37,8 @@ class WorkerSettings:
     # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
     cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    # 限制并发抽取数：AIGC 网关对突发并发敏感（会以 402/429 限流），
+    # 低并发 + ai 层退避重试 = 既不打爆网关又能在偶发限流时自愈。
+    max_jobs = 4
     on_startup = startup
     on_shutdown = shutdown
