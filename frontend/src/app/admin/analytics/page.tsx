@@ -1,7 +1,8 @@
 'use client';
-import { AreaChart, DonutChart } from '@tremor/react';
 import Card from 'components/card';
 import MiniStatistics from 'components/card/MiniStatistics';
+import LineAreaChart from 'components/charts/LineAreaChart';
+import PieChart from 'components/charts/PieChart';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { MdAttachMoney, MdPendingActions, MdTrendingUp } from 'react-icons/md';
@@ -11,6 +12,8 @@ import { Invoice } from 'lib/types';
 const yuan = (n: number) =>
   `¥${n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
 const amount = (i: Invoice) => parseFloat(i.total_amount ?? '0') || 0;
+// Horizon 品牌色板
+const PALETTE = ['#4318FF', '#6AD2FF', '#05CD99', '#FFB547', '#EE5D50', '#707EAE'];
 
 export default function AnalyticsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -21,37 +24,84 @@ export default function AnalyticsPage() {
       .catch(() => undefined);
   }, []);
 
-  const { total, unreimbursed, maxSingle, byCategory, byMonth } =
-    useMemo(() => {
-      const withAmount = invoices.filter((i) => i.total_amount != null);
-      const total = withAmount.reduce((s, i) => s + amount(i), 0);
-      const unreimbursed = withAmount
-        .filter((i) => i.reimbursement_status === 'unreimbursed')
-        .reduce((s, i) => s + amount(i), 0);
-      const maxSingle = withAmount.reduce((m, i) => Math.max(m, amount(i)), 0);
+  const {
+    total,
+    unreimbursed,
+    maxSingle,
+    pieSeries,
+    pieOptions,
+    areaSeries,
+    areaOptions,
+  } = useMemo(() => {
+    const withAmount = invoices.filter((i) => i.total_amount != null);
+    const total = withAmount.reduce((s, i) => s + amount(i), 0);
+    const unreimbursed = withAmount
+      .filter((i) => i.reimbursement_status === 'unreimbursed')
+      .reduce((s, i) => s + amount(i), 0);
+    const maxSingle = withAmount.reduce((m, i) => Math.max(m, amount(i)), 0);
 
-      const catMap: Record<string, number> = {};
-      for (const i of withAmount) {
-        const c = i.category ?? '其他';
-        catMap[c] = (catMap[c] ?? 0) + amount(i);
-      }
-      const byCategory = Object.entries(catMap).map(([name, 金额]) => ({
-        name,
-        金额,
-      }));
+    const catMap: Record<string, number> = {};
+    for (const i of withAmount) {
+      const c = i.category ?? '其他';
+      catMap[c] = (catMap[c] ?? 0) + amount(i);
+    }
+    const cats = Object.entries(catMap);
 
-      const monthMap: Record<string, number> = {};
-      for (const i of withAmount) {
-        if (!i.issue_date) continue;
-        const m = i.issue_date.slice(0, 7);
-        monthMap[m] = (monthMap[m] ?? 0) + amount(i);
-      }
-      const byMonth = Object.entries(monthMap)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([month, 金额]) => ({ month, 金额 }));
+    const monthMap: Record<string, number> = {};
+    for (const i of withAmount) {
+      if (!i.issue_date) continue;
+      const m = i.issue_date.slice(0, 7);
+      monthMap[m] = (monthMap[m] ?? 0) + amount(i);
+    }
+    const months = Object.entries(monthMap).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
 
-      return { total, unreimbursed, maxSingle, byCategory, byMonth };
-    }, [invoices]);
+    // 分类占比饼图（母版 PieChart，series=number[] + options.labels）
+    const pieSeries = cats.map(([, v]) => v);
+    const pieOptions = {
+      labels: cats.map(([k]) => k),
+      colors: PALETTE,
+      legend: { position: 'bottom', labels: { colors: '#A3AED0' } },
+      dataLabels: { enabled: false },
+      stroke: { width: 0 },
+      tooltip: { theme: 'dark', y: { formatter: (v: number) => yuan(v) } },
+    };
+
+    // 月度趋势面积图（母版 LineAreaChart）
+    const areaSeries = [{ name: '金额', data: months.map(([, v]) => v) }];
+    const areaOptions = {
+      chart: { toolbar: { show: false } },
+      colors: ['#4318FF'],
+      stroke: { curve: 'smooth' },
+      dataLabels: { enabled: false },
+      tooltip: { theme: 'dark', y: { formatter: (v: number) => yuan(v) } },
+      xaxis: {
+        categories: months.map(([k]) => k),
+        labels: { style: { colors: '#A3AED0', fontSize: '12px' } },
+        axisBorder: { show: false },
+        axisTicks: { show: false },
+      },
+      yaxis: {
+        labels: {
+          formatter: (v: number) => yuan(v),
+          style: { colors: '#A3AED0' },
+        },
+      },
+      legend: { show: false },
+      grid: { show: false },
+    };
+
+    return {
+      total,
+      unreimbursed,
+      maxSingle,
+      pieSeries,
+      pieOptions,
+      areaSeries,
+      areaOptions,
+    };
+  }, [invoices]);
 
   return (
     <div className="mt-3 flex flex-col gap-5">
@@ -83,34 +133,24 @@ export default function AnalyticsPage() {
           <h2 className="text-lg font-bold text-navy-700 dark:text-white">
             消费分类占比
           </h2>
-          {byCategory.length === 0 ? (
+          {pieSeries.length === 0 ? (
             <p className="mt-6 text-sm text-gray-400">暂无数据</p>
           ) : (
-            <DonutChart
-              className="mt-6 h-72"
-              data={byCategory}
-              category="金额"
-              index="name"
-              valueFormatter={yuan}
-              colors={['indigo', 'cyan', 'emerald', 'amber', 'rose', 'violet']}
-            />
+            <div className="mt-6 h-72">
+              <PieChart chartData={pieSeries} chartOptions={pieOptions} />
+            </div>
           )}
         </Card>
         <Card extra="p-6">
           <h2 className="text-lg font-bold text-navy-700 dark:text-white">
             月度消费趋势
           </h2>
-          {byMonth.length === 0 ? (
+          {areaSeries[0].data.length === 0 ? (
             <p className="mt-6 text-sm text-gray-400">暂无数据</p>
           ) : (
-            <AreaChart
-              className="mt-6 h-72"
-              data={byMonth}
-              index="month"
-              categories={['金额']}
-              valueFormatter={yuan}
-              colors={['indigo']}
-            />
+            <div className="mt-6 h-72">
+              <LineAreaChart chartData={areaSeries} chartOptions={areaOptions} />
+            </div>
           )}
         </Card>
       </div>

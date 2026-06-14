@@ -29,6 +29,19 @@ class PieChart extends React.Component<ChartProps, ChartState> {
     });
   }
 
+  componentDidUpdate(prevProps: ChartProps) {
+    // 修复：props 变化时同步到 state，否则异步加载/刷新后图表不重绘。
+    if (
+      prevProps.chartData !== this.props.chartData ||
+      prevProps.chartOptions !== this.props.chartOptions
+    ) {
+      this.setState({
+        chartData: this.props.chartData,
+        chartOptions: this.props.chartOptions,
+      });
+    }
+  }
+
   render() {
     return (
       <Chart
