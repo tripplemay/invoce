@@ -1,6 +1,7 @@
 'use client';
 
 import Calendar from 'react-calendar';
+import { MdChevronLeft, MdChevronRight } from 'react-icons/md';
 import Dropdown from 'components/dropdown';
 import {
   DatePreset,
@@ -65,7 +66,7 @@ export default function DateRangeFilter({ range, onChange }: Props) {
       }
       classNames="top-12 right-0 w-max"
     >
-      <div className="rounded-2xl bg-white p-4 shadow-xl dark:bg-navy-700">
+      <div className="w-[330px] rounded-2xl bg-white p-4 shadow-xl dark:bg-navy-700">
         <div className="mb-3 flex flex-wrap gap-2">
           {PRESETS.map((p) => (
             <button
@@ -89,9 +90,14 @@ export default function DateRangeFilter({ range, onChange }: Props) {
         </div>
         <Calendar
           selectRange
+          view="month"
           value={calValue}
           onChange={handleCalChange}
           locale="zh-CN"
+          prevLabel={<MdChevronLeft className="mx-auto h-5 w-5" />}
+          nextLabel={<MdChevronRight className="mx-auto h-5 w-5" />}
+          prev2Label={null}
+          next2Label={null}
         />
       </div>
     </Dropdown>

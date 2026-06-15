@@ -4,6 +4,8 @@ import 'styles/App.css';
 import 'styles/Contact.css';
 // import '@asseinfo/react-kanban/dist/styles.css';
 // import 'styles/Plugins.css';
+// react-calendar 基础栅格布局必须先于 MiniCalendar.css 覆盖样式加载（否则日历布局塌掉）
+import 'react-calendar/dist/Calendar.css';
 import 'styles/MiniCalendar.css';
 import 'styles/index.css';
 
