@@ -46,15 +46,34 @@ def test_extract_rejects_non_allowlist_and_spoof() -> None:
     html = (
         '<a href="https://evil.com/digital_1.pdf">e</a>'
         '<a href="https://jdcloud-oss.com.evil.com/x.pdf">spoof</a>'
-        '<a href="http://eicore.s3.cn-north-1.jdcloud-oss.com/a.pdf">http(非https)</a>'
+        '<a href="https://evilstorage.jd.com/x.pdf">storage精确伪装</a>'
         '<a href="https://eicore.s3.cn-north-1.jdcloud-oss.com:9999/a.pdf">非标端口</a>'
     )
     assert link_fetch.extract_invoice_pdf_links(html) == []
 
 
+def test_extract_accepts_all_jd_cdns_incl_http() -> None:
+    """京东用 3 个发票 CDN:jdcloud-oss(https)、storage.jd.com(http)、jcloudcs(http) 都应抽到。"""
+    html = (
+        '<a href="https://eicore.s3.cn-north-1.jdcloud-oss.com/digital-invoice/d1.pdf?S=a">新版</a>'
+        '<a href="http://storage.jd.com/fm-eicore/051002-7404.pdf?Expires=1&amp;AccessKey=k">自营旧版</a>'
+        '<a href="http://oss.cn-north-1.jcloudcs.com/pop-einvoice/2642-9230.pdf?Expires=1">POP第三方</a>'
+        '<a href="https://tr.jd.com/jump/transfer?x=1">营销跳转(忽略)</a>'
+    )
+    links = link_fetch.extract_invoice_pdf_links(html)
+    assert links == [
+        "https://eicore.s3.cn-north-1.jdcloud-oss.com/digital-invoice/d1.pdf?S=a",
+        "http://storage.jd.com/fm-eicore/051002-7404.pdf?Expires=1&AccessKey=k",
+        "http://oss.cn-north-1.jcloudcs.com/pop-einvoice/2642-9230.pdf?Expires=1",
+    ]
+
+
 def test_is_allowed_host() -> None:
     assert link_fetch.is_allowed_host("eicore-invoice-26.s3.cn-north-1.jdcloud-oss.com")
-    assert link_fetch.is_allowed_host("jdcloud-oss.com")  # apex 也允许
+    assert link_fetch.is_allowed_host("storage.jd.com")  # 精确
+    assert link_fetch.is_allowed_host("oss.cn-north-1.jcloudcs.com")  # 后缀
+    assert not link_fetch.is_allowed_host("evilstorage.jd.com")  # storage.jd.com 是精确,非后缀
+    assert not link_fetch.is_allowed_host("storage.jd.com.evil.com")  # 精确伪装
     assert not link_fetch.is_allowed_host("jdcloud-oss.com.evil.com")  # 后缀伪装
     assert not link_fetch.is_allowed_host("xjdcloud-oss.com")  # 无点边界
     assert not link_fetch.is_allowed_host("evil.com")

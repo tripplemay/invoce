@@ -6,7 +6,7 @@
 
 安全模型（关键）：**域名白名单为主控**——只拉取已知发票 CDN，绝不无差别跟随陌生链接，
 从根上规避 SSRF/钓鱼（监管反复预警「发票」钓鱼邮件）。在白名单之上再叠多层防御：
-- 只允许 https；host 必须命中白名单后缀（带点边界，防 `jdcloud-oss.com.evil.com` 伪装）；
+- 只允许 http/https + host 命中白名单（精确或带点边界后缀，防 `*.evil.com` 伪装）+ 端口仅 80/443；
 - netguard IP 兜底（解析地址落私有/内网段则拒绝）；
 - follow_redirects=False（不跟任何重定向，防重定向 SSRF；京东直链本身无跳转）；
 - 响应大小上限 + 拒绝 text/image content-type + 强制 `%PDF` 魔数；超时。
@@ -22,8 +22,16 @@ import httpx
 
 from app.core import netguard
 
-# 允许自动拉取的发票 CDN host 后缀（带前导点 → 强制点边界）。新来源验证通过后追加到此处即可扩展。
-ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (".jdcloud-oss.com",)
+# 允许自动拉取的发票 CDN（均实测为免登录预签名直链 PDF）。京东用了多个发票 CDN：
+#   - 后缀匹配（带前导点 → 强制点边界）：JD自营新版 *.jdcloud-oss.com、POP第三方 *.jcloudcs.com；
+#   - 精确匹配（无子域，避免 evilstorage.jd.com 误命中）：JD自营旧版 storage.jd.com。
+# 新来源验证通过后按需追加。
+ALLOWED_HOST_EXACT: frozenset[str] = frozenset({"storage.jd.com"})
+ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (".jdcloud-oss.com", ".jcloudcs.com")
+# storage.jd.com / jcloudcs.com 的直链是 http（非 https）。域名白名单是主控边界，故放行 http；
+# 仍叠 netguard IP 兜底 + follow_redirects=False + %PDF 魔数 + 端口限，http 不放大 SSRF 面。
+_ALLOWED_SCHEMES = ("https", "http")
+_ALLOWED_PORTS = (None, 443, 80)
 
 MAX_PDF_BYTES = 20 * 1024 * 1024  # 单张发票 PDF 上限
 # 单封邮件最多处理的直链数：防恶意邮件塞大量链接放大出网/并发面（正常京东一封=1 张）。
@@ -37,22 +45,22 @@ LinkFetcher = Callable[[list[str]], Awaitable[list[bytes]]]
 
 
 def is_allowed_host(host: str) -> bool:
-    """host 是否命中白名单：精确等于 apex，或以「.<apex>」结尾（点边界防后缀伪装）。"""
+    """host 是否命中白名单：精确命中 EXACT，或以白名单后缀「.<apex>」结尾（点边界防伪装）。"""
     h = (host or "").strip().lower().rstrip(".")
     if not h:
         return False
-    return any(h == suffix.lstrip(".") or h.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES)
+    return h in ALLOWED_HOST_EXACT or any(h.endswith(suffix) for suffix in ALLOWED_HOST_SUFFIXES)
 
 
 def _accept_url(parsed: SplitResult) -> bool:
-    """统一的可拉取性校验：https + 命中白名单 host + 端口仅 443（含缺省）。"""
-    if parsed.scheme != "https" or not is_allowed_host(parsed.hostname or ""):
+    """统一的可拉取性校验：http/https + 命中白名单 host + 端口仅 80/443（含缺省）。"""
+    if parsed.scheme not in _ALLOWED_SCHEMES or not is_allowed_host(parsed.hostname or ""):
         return False
     try:
         port = parsed.port
     except ValueError:  # 端口非数字等畸形 URL
         return False
-    return port in (None, 443)
+    return port in _ALLOWED_PORTS
 
 
 def extract_invoice_pdf_links(html: str) -> list[str]:
