@@ -17,6 +17,7 @@ def mock_io(monkeypatch):
 
     monkeypatch.setattr("app.core.storage.upload_bytes", _noop_upload)
     monkeypatch.setattr("app.core.storage.presigned_get_url", _fake_presign)
+    monkeypatch.setattr("app.core.storage.delete_object", _noop_upload)
     monkeypatch.setattr("app.api.invoices.enqueue_extract", _noop_enqueue)
 
 
@@ -131,16 +132,91 @@ async def test_check_duplicate_endpoint(auth_client, mock_io) -> None:
     assert r2.json()["duplicate"] is False
 
 
-async def test_reimbursement_status_forward_only(auth_client, mock_io) -> None:
+async def test_reimbursement_status_free_any_direction(auth_client, mock_io) -> None:
+    """状态自由改：可前进也可回退（纠错用），仅校验目标是合法状态。"""
     inv = (await _upload(auth_client)).json()[0]
     fwd = await auth_client.patch(
-        f"/invoices/{inv['id']}/reimbursement-status", json={"reimbursement_status": "submitted"}
+        f"/invoices/{inv['id']}/reimbursement-status", json={"reimbursement_status": "reimbursed"}
     )
-    assert fwd.status_code == 200 and fwd.json()["reimbursement_status"] == "submitted"
+    assert fwd.status_code == 200 and fwd.json()["reimbursement_status"] == "reimbursed"
     back = await auth_client.patch(
         f"/invoices/{inv['id']}/reimbursement-status", json={"reimbursement_status": "unreimbursed"}
     )
-    assert back.status_code == 409
+    assert back.status_code == 200 and back.json()["reimbursement_status"] == "unreimbursed"
+    bad = await auth_client.patch(
+        f"/invoices/{inv['id']}/reimbursement-status", json={"reimbursement_status": "nope"}
+    )
+    assert bad.status_code == 422
+
+
+async def test_bulk_change_status(auth_client, mock_io) -> None:
+    a = (await _upload(auth_client, name="a.pdf")).json()[0]
+    b = (await _upload(auth_client, name="b.pdf")).json()[0]
+    r = await auth_client.post(
+        "/invoices/bulk/reimbursement-status",
+        json={"invoice_ids": [a["id"], b["id"]], "reimbursement_status": "reimbursed"},
+    )
+    assert r.status_code == 200 and r.json()["count"] == 2
+    lst = (await auth_client.get("/invoices")).json()
+    assert all(i["reimbursement_status"] == "reimbursed" for i in lst)
+    # 自由改回（任意方向）
+    r2 = await auth_client.post(
+        "/invoices/bulk/reimbursement-status",
+        json={"invoice_ids": [a["id"], b["id"]], "reimbursement_status": "unreimbursed"},
+    )
+    assert r2.json()["count"] == 2
+    assert all(
+        i["reimbursement_status"] == "unreimbursed"
+        for i in (await auth_client.get("/invoices")).json()
+    )
+
+
+async def test_bulk_change_status_invalid(auth_client, mock_io) -> None:
+    a = (await _upload(auth_client)).json()[0]
+    r = await auth_client.post(
+        "/invoices/bulk/reimbursement-status",
+        json={"invoice_ids": [a["id"]], "reimbursement_status": "bogus"},
+    )
+    assert r.status_code == 422
+
+
+async def test_bulk_delete(auth_client, mock_io) -> None:
+    a = (await _upload(auth_client, name="a.pdf")).json()[0]
+    b = (await _upload(auth_client, name="b.pdf")).json()[0]
+    c = (await _upload(auth_client, name="c.pdf")).json()[0]
+    r = await auth_client.post("/invoices/bulk-delete", json={"invoice_ids": [a["id"], b["id"]]})
+    assert r.status_code == 200 and r.json()["count"] == 2
+    remaining = [i["id"] for i in (await auth_client.get("/invoices")).json()]
+    assert remaining == [c["id"]]
+
+
+async def test_single_delete(auth_client, mock_io) -> None:
+    a = (await _upload(auth_client)).json()[0]
+    r = await auth_client.delete(f"/invoices/{a['id']}")
+    assert r.status_code == 204
+    assert (await auth_client.get("/invoices")).json() == []
+
+
+async def test_bulk_ops_owner_isolation(client, mock_io) -> None:
+    """批量删只作用于本人发票，越权 id 被忽略（count 0），他人发票不受影响。"""
+    ra = await client.post("/auth/register", json={"email": "ow1@b.com", "password": "password123"})
+    up = await client.post(
+        "/invoices/upload",
+        files={"files": ("a.pdf", b"%PDF-1.4 a", "application/pdf")},
+        headers={"Authorization": f"Bearer {ra.json()['access_token']}"},
+    )
+    other_id = up.json()[0]["id"]
+    rb = await client.post("/auth/register", json={"email": "ow2@b.com", "password": "password123"})
+    r = await client.post(
+        "/invoices/bulk-delete",
+        json={"invoice_ids": [other_id]},
+        headers={"Authorization": f"Bearer {rb.json()['access_token']}"},
+    )
+    assert r.status_code == 200 and r.json()["count"] == 0
+    still = await client.get(
+        f"/invoices/{other_id}", headers={"Authorization": f"Bearer {ra.json()['access_token']}"}
+    )
+    assert still.status_code == 200
 
 
 async def test_preview_returns_presigned_url(auth_client, mock_io) -> None:

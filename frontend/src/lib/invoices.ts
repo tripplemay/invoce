@@ -34,6 +34,24 @@ export function changeReimbursementStatus(
   });
 }
 
+/** 批量改报销状态：把选中发票一次性改为目标状态（任意方向）。 */
+export function bulkChangeStatus(
+  ids: string[],
+  reimbursementStatus: ReimbursementStatus,
+): Promise<{ count: number }> {
+  return api.post<{ count: number }>('/invoices/bulk/reimbursement-status', {
+    invoice_ids: ids,
+    reimbursement_status: reimbursementStatus,
+  });
+}
+
+/** 批量删除选中发票（连同原件）。 */
+export function bulkDeleteInvoices(ids: string[]): Promise<{ count: number }> {
+  return api.post<{ count: number }>('/invoices/bulk-delete', {
+    invoice_ids: ids,
+  });
+}
+
 export interface DuplicateCheck {
   duplicate: boolean;
   existing_id: string | null;

@@ -64,3 +64,16 @@ class PreviewOut(BaseModel):
 class ExportRequest(BaseModel):
     invoice_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
     mark_submitted: bool = True
+
+
+class BulkStatusUpdate(BaseModel):
+    invoice_ids: list[uuid.UUID] = Field(min_length=1, max_length=2000)
+    reimbursement_status: str
+
+
+class BulkDeleteRequest(BaseModel):
+    invoice_ids: list[uuid.UUID] = Field(min_length=1, max_length=2000)
+
+
+class BulkResult(BaseModel):
+    count: int

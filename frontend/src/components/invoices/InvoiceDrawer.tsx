@@ -4,7 +4,12 @@ import Button from 'components/button';
 import InputField from 'components/fields/InputField';
 import { useEffect, useState } from 'react';
 import { MdClose } from 'react-icons/md';
-import { checkDuplicate, getPreview, updateInvoice } from 'lib/invoices';
+import {
+  checkDuplicate,
+  deleteInvoice,
+  getPreview,
+  updateInvoice,
+} from 'lib/invoices';
 import { Invoice } from 'lib/types';
 
 interface Props {
@@ -36,6 +41,8 @@ export default function InvoiceDrawer({
   const [dupWarn, setDupWarn] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!invoice) return;
@@ -47,6 +54,7 @@ export default function InvoiceDrawer({
     setForm(next);
     setDupWarn('');
     setError('');
+    setConfirmingDelete(false);
   }, [invoice]);
 
   // 预览：拉取 60s 预签名 URL，并在过期前自动续签
@@ -111,6 +119,21 @@ export default function InvoiceDrawer({
       setError(e instanceof Error ? e.message : '保存失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!invoice) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await deleteInvoice(invoice.id);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '删除失败');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -198,6 +221,38 @@ export default function InvoiceDrawer({
             >
               {saving ? '保存中…' : '确认入库'}
             </Button>
+
+            {confirmingDelete ? (
+              <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-4 py-3 dark:bg-red-500/10">
+                <span className="text-sm text-red-600 dark:text-red-400">
+                  确定删除此发票？不可撤销，原件一并移除。
+                </span>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={handleDelete}
+                  className="ml-auto shrink-0 rounded-lg bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
+                >
+                  {deleting ? '删除中…' : '确认删除'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setConfirmingDelete(false)}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className="mt-3 w-full rounded-xl py-2 text-sm font-medium text-red-500 transition hover:bg-red-50 dark:hover:bg-red-500/10"
+              >
+                删除发票
+              </button>
+            )}
           </div>
         </div>
       </aside>

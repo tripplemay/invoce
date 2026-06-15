@@ -16,6 +16,9 @@ from app.models.enums import InvoiceSource, InvoiceStatus, ReimbursementStatus
 from app.models.invoice import Invoice
 from app.models.user import User
 from app.schemas.invoice import (
+    BulkDeleteRequest,
+    BulkResult,
+    BulkStatusUpdate,
     DuplicateCheckIn,
     DuplicateCheckOut,
     ExportRequest,
@@ -233,6 +236,50 @@ async def export_invoices(
     )
 
 
+async def _owned_invoices(
+    session: AsyncSession, user_id: uuid.UUID, ids: list[uuid.UUID]
+) -> list[Invoice]:
+    """取当前用户名下、且 id 在给定集合内的发票（越权的 id 自然被过滤掉）。"""
+    return list(
+        await session.scalars(
+            select(Invoice).where(Invoice.user_id == user_id, Invoice.id.in_(ids))
+        )
+    )
+
+
+@router.post("/bulk/reimbursement-status", response_model=BulkResult)
+async def bulk_update_reimbursement_status(
+    data: BulkStatusUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BulkResult:
+    """批量改报销状态：把选中的(本人)发票一次性改为目标状态（任意方向）。"""
+    if data.reimbursement_status not in _REIMBURSE_ORDER:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "非法的报销状态")
+    rows = await _owned_invoices(session, user.id, data.invoice_ids)
+    for inv in rows:
+        inv.reimbursement_status = data.reimbursement_status
+    await session.commit()
+    return BulkResult(count=len(rows))
+
+
+@router.post("/bulk-delete", response_model=BulkResult)
+async def bulk_delete_invoices(
+    data: BulkDeleteRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> BulkResult:
+    """批量删除：删除选中的(本人)发票及其原件（原件清理 best-effort）。"""
+    rows = await _owned_invoices(session, user.id, data.invoice_ids)
+    keys = [inv.file_key for inv in rows]
+    for inv in rows:
+        await session.delete(inv)
+    await session.commit()
+    for key in keys:
+        await storage.delete_object(key)
+    return BulkResult(count=len(rows))
+
+
 @router.get("/{invoice_id}", response_model=InvoiceOut)
 async def get_invoice(
     invoice_id: uuid.UUID,
@@ -283,12 +330,10 @@ async def update_reimbursement_status(
     session: AsyncSession = Depends(get_session),
 ) -> Invoice:
     inv = await _get_owned(invoice_id, user, session)
-    target = data.reimbursement_status
-    if target not in _REIMBURSE_ORDER:
+    if data.reimbursement_status not in _REIMBURSE_ORDER:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "非法的报销状态")
-    if _REIMBURSE_ORDER[target] <= _REIMBURSE_ORDER[inv.reimbursement_status]:
-        raise HTTPException(status.HTTP_409_CONFLICT, "报销状态只能向前流转，不可回退")
-    inv.reimbursement_status = target
+    # 自由改：允许任意方向（便于把误标的「已完成/报销中」改回纠错）。
+    inv.reimbursement_status = data.reimbursement_status
     await session.commit()
     await session.refresh(inv)
     return inv
@@ -301,8 +346,10 @@ async def delete_invoice(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     inv = await _get_owned(invoice_id, user, session)
+    key = inv.file_key
     await session.delete(inv)
     await session.commit()
+    await storage.delete_object(key)  # best-effort 清理原件，失败不影响删除
 
 
 @router.get("/{invoice_id}/preview", response_model=PreviewOut)

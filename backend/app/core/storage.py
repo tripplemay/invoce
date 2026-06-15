@@ -1,6 +1,7 @@
 """S3 兼容对象存储客户端（boto3）。私有桶，按 user_id 前缀隔离，预签名 URL 安全预览。"""
 
 import asyncio
+import contextlib
 import hashlib
 from functools import lru_cache
 
@@ -47,6 +48,17 @@ async def download_bytes(key: str) -> bytes:
         return resp["Body"].read()
 
     return await asyncio.to_thread(_get)
+
+
+async def delete_object(key: str) -> None:
+    """删除对象（best-effort）：删发票行已成功，对象存储清理失败不应阻断或回滚，故吞掉异常。"""
+
+    def _del() -> None:
+        # 孤儿文件清理失败可接受，不连累删除主流程
+        with contextlib.suppress(Exception):
+            _client().delete_object(Bucket=settings.s3_bucket, Key=key)
+
+    await asyncio.to_thread(_del)
 
 
 async def presigned_get_url(key: str, expires: int | None = None) -> str:
