@@ -17,6 +17,14 @@ import {
   SOURCE_LABELS,
   STATUS_LABELS,
 } from 'lib/types';
+import {
+  DateRange,
+  EMPTY_RANGE,
+  isInDateRange,
+  isRangeActive,
+  sumAmount,
+} from 'lib/dateFilter';
+import DateRangeFilter from './DateRangeFilter';
 import StatusBadge from './StatusBadge';
 
 const NEXT_STATUS: Record<ReimbursementStatus, ReimbursementStatus | null> = {
@@ -72,11 +80,27 @@ export default function InvoiceTable({
   onToggleAll,
 }: Props) {
   const [tab, setTab] = useState('all');
+  const [range, setRange] = useState<DateRange>(EMPTY_RANGE);
   const [sorting, setSorting] = useState<SortingState>([]);
   // 必须 useMemo 稳定 data/columns 引用，否则 tanstack 在 React 19 下会无限重渲染("卡死")
+  // 筛选 = 报销状态标签 AND 开票日期范围（均 client-side，数据已全量加载）。
   const filtered = useMemo(
-    () => data.filter(TABS.find((t) => t.key === tab)!.match),
-    [data, tab],
+    () =>
+      data
+        .filter(TABS.find((t) => t.key === tab)!.match)
+        .filter((i) => isInDateRange(i.issue_date, range)),
+    [data, tab, range],
+  );
+  const filteredSum = useMemo(() => sumAmount(filtered), [filtered]);
+  // 范围激活时，当前标签下因无开票日期(未抽取)被排除的张数，提示用户。
+  const hiddenNoDate = useMemo(
+    () =>
+      isRangeActive(range)
+        ? data
+            .filter(TABS.find((t) => t.key === tab)!.match)
+            .filter((i) => !i.issue_date).length
+        : 0,
+    [data, tab, range],
   );
 
   const columns = useMemo(
@@ -205,6 +229,41 @@ export default function InvoiceTable({
             {t.label}
           </button>
         ))}
+        <div className="ml-auto">
+          <DateRangeFilter range={range} onChange={setRange} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-gray-600 dark:text-gray-300">
+          筛选结果{' '}
+          <span className="font-bold text-navy-700 dark:text-white">
+            {filtered.length}
+          </span>{' '}
+          张 · 合计{' '}
+          <span className="font-bold text-navy-700 dark:text-white">
+            ¥{filteredSum.toFixed(2)}
+          </span>
+        </span>
+        {filtered.length > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              onToggleAll(
+                filtered.map((i) => i.id),
+                true,
+              )
+            }
+            className="dark:bg-brand-500/10 rounded-lg bg-brand-50 px-3 py-1 text-xs font-medium text-brand-600 hover:bg-brand-100 dark:text-brand-400"
+          >
+            全选这 {filtered.length} 张
+          </button>
+        )}
+        {hiddenNoDate > 0 && (
+          <span className="text-xs text-gray-400">
+            （{hiddenNoDate} 张未识别开票日期，未计入范围）
+          </span>
+        )}
       </div>
 
       <div className="mt-4 overflow-x-auto">
