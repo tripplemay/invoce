@@ -46,16 +46,9 @@ class Invoice(UUIDPKMixin, TimestampMixin, Base):
             name="ck_invoice_reimbursement_status",
         ),
         CheckConstraint("source IN ('manual','email_auto')", name="ck_invoice_source"),
-        # 邮件归集的文件级去重数据库权威：仅对 email_auto 生效——同一用户同一文件(sha256)只允许一行。
-        # 让 DB 成为去重终点，避免“回填 + 增量 cron”并发时 check-then-act 竞态产生重复发票行。
-        # 手动上传(source=manual)不受此约束，保留用户重复上传同一文件的自由。
-        Index(
-            "uq_invoice_email_file",
-            "user_id",
-            "file_key",
-            unique=True,
-            postgresql_where=text("source = 'email_auto'"),
-        ),
+        # 文件级去重的数据库权威：同一用户同一文件(sha256)只允许一行（含手动上传与邮件归集）。
+        # 让 DB 成为去重终点，杜绝并发(回填+cron / 双击上传 / 前端重试)产生的重复发票行。
+        Index("uq_invoice_user_file", "user_id", "file_key", unique=True),
         # 防重唯一索引：仅当已抽取出号码时生效（排除 processing/failed 空号码行）；
         # NULLS NOT DISTINCT 让 (code=NULL, number) 也能正确判重 —— 修复全电发票去重漏洞。
         Index(

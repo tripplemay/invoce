@@ -122,3 +122,9 @@ def test_decode_mime_header() -> None:
     encoded = "=?utf-8?b?5Y+R56Wo?="  # “发票”
     assert email_parse.decode_mime_header(encoded) == "发票"
     assert email_parse.decode_mime_header(None) == ""
+
+
+def test_decode_mime_header_invalid_charset() -> None:
+    """非法 charset（如 unknown-8bit）应容错回退、绝不抛异常（否则坏邮件会中断整批归集）。"""
+    bad = "=?unknown-8bit?B?5Y+R56Wo?="  # 发票的 UTF-8 字节，却标了非法 charset
+    assert email_parse.decode_mime_header(bad) == "发票"

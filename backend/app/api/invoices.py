@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -23,12 +24,14 @@ from app.schemas.invoice import (
     PreviewOut,
     ReimbursementStatusUpdate,
 )
+from app.services import email_parse
 from app.services.export import build_export_zip
 from app.services.seller_category import upsert_rule
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 单个 PDF/图片上限 15MB
+MAX_ZIP_SIZE = 64 * 1024 * 1024  # 批量发票 ZIP 上限 64MB（如京东发票中心批量下载包）
 
 
 def detect_file_type(content: bytes) -> tuple[str, str] | None:
@@ -84,6 +87,33 @@ async def _find_duplicate(
     return await session.scalar(stmt)
 
 
+async def _persist_invoice(
+    session: AsyncSession, user: User, content: bytes, ext: str, ctype: str
+) -> Invoice | None:
+    """落库一张发票：同用户同文件(file_key)已存在则跳过(去重)，返回新建的 Invoice 或 None。"""
+    key = storage.build_key(str(user.id), content, ext)
+    if await session.scalar(
+        select(Invoice.id).where(Invoice.user_id == user.id, Invoice.file_key == key)
+    ):
+        return None  # 快路径去重
+    await storage.upload_bytes(key, content, ctype)
+    inv = Invoice(
+        user_id=user.id,
+        file_key=key,
+        source=InvoiceSource.MANUAL.value,
+        status=InvoiceStatus.PROCESSING.value,
+        reimbursement_status=ReimbursementStatus.UNREIMBURSED.value,
+    )
+    # 用 SAVEPOINT 隔离插入：并发下撞 (user_id,file_key) 唯一约束即视为已存在、跳过。
+    try:
+        async with session.begin_nested():
+            session.add(inv)
+            await session.flush()
+    except IntegrityError:
+        return None
+    return inv
+
+
 @router.post("/upload", response_model=list[InvoiceOut], status_code=status.HTTP_201_CREATED)
 async def upload(
     files: list[UploadFile] = File(...),
@@ -93,26 +123,33 @@ async def upload(
     created: list[Invoice] = []
     for f in files:
         content = await f.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "文件过大（上限 15MB）")
-        detected = detect_file_type(content)
-        if detected is None:
+        is_zip = content[:4] == b"PK\x03\x04"
+        limit = MAX_ZIP_SIZE if is_zip else MAX_FILE_SIZE
+        if len(content) > limit:
             raise HTTPException(
-                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "不支持的文件类型（需 PDF/PNG/JPG）"
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                f"文件过大（上限 {limit // (1024 * 1024)}MB）",
             )
-        ext, ctype = detected
-        key = storage.build_key(str(user.id), content, ext)
-        await storage.upload_bytes(key, content, ctype)
-        inv = Invoice(
-            user_id=user.id,
-            file_key=key,
-            source=InvoiceSource.MANUAL.value,
-            status=InvoiceStatus.PROCESSING.value,
-            reimbursement_status=ReimbursementStatus.UNREIMBURSED.value,
-        )
-        session.add(inv)
-        await session.flush()
-        created.append(inv)
+        if is_zip:
+            # ZIP（如京东发票中心批量下载包）：解出其中每张发票 PDF，各建一条记录。
+            pdfs = email_parse.pdfs_from_zip_bytes(content)
+            if not pdfs:
+                raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "ZIP 中未找到发票 PDF")
+            for pdf in pdfs:
+                inv = await _persist_invoice(session, user, pdf, ".pdf", "application/pdf")
+                if inv is not None:
+                    created.append(inv)
+        else:
+            detected = detect_file_type(content)
+            if detected is None:
+                raise HTTPException(
+                    status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    "不支持的文件类型（需 PDF/PNG/JPG 或 ZIP）",
+                )
+            ext, ctype = detected
+            inv = await _persist_invoice(session, user, content, ext, ctype)
+            if inv is not None:
+                created.append(inv)
     await session.commit()
     for inv in created:
         await session.refresh(inv)

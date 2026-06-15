@@ -21,7 +21,10 @@ def mock_io(monkeypatch):
 
 
 async def _upload(client: AsyncClient, name: str = "inv.pdf", ctype: str = "application/pdf"):
-    return await client.post("/invoices/upload", files={"files": (name, b"%PDF-1.4 data", ctype)})
+    # 内容随文件名变化，避免不同用例间 file_key 去重相互影响
+    return await client.post(
+        "/invoices/upload", files={"files": (name, b"%PDF-1.4 " + name.encode(), ctype)}
+    )
 
 
 async def test_upload_creates_processing_invoice(auth_client, mock_io) -> None:
@@ -42,6 +45,49 @@ async def test_upload_rejects_bad_magic(auth_client, mock_io) -> None:
         "/invoices/upload", files={"files": ("x.pdf", b"plain text not a pdf", "application/pdf")}
     )
     assert r.status_code == 415
+
+
+async def test_upload_zip_extracts_pdfs(auth_client, mock_io) -> None:
+    """上传 ZIP（如京东批量下载包）应解出其中每张发票 PDF，并跳过汇总单等噪音。"""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("pdf/a.pdf", b"%PDF-1.4 A")
+        z.writestr("pdf/b.pdf", b"%PDF-1.4 B")
+        z.writestr("通行费电子票据汇总单.pdf", b"%PDF-noise")
+    r = await auth_client.post(
+        "/invoices/upload",
+        files={"files": ("invoices.zip", buf.getvalue(), "application/zip")},
+    )
+    assert r.status_code == 201
+    assert len(r.json()) == 2  # 2 张真发票，汇总单被噪音过滤
+    assert all(i["source"] == "manual" for i in r.json())
+
+
+async def test_upload_zip_dedups_identical_pdfs(auth_client, mock_io) -> None:
+    """同一 ZIP 内两个字节完全相同的 PDF 只建 1 条（file_key 去重）。"""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("a.pdf", b"%PDF-1.4 SAME")
+        z.writestr("b.pdf", b"%PDF-1.4 SAME")
+    r = await auth_client.post(
+        "/invoices/upload", files={"files": ("dup.zip", buf.getvalue(), "application/zip")}
+    )
+    assert r.status_code == 201 and len(r.json()) == 1
+
+
+async def test_upload_dedup_skips_duplicate(auth_client, mock_io) -> None:
+    """同一文件重复上传：第二次靠 file_key 去重，不再新建。"""
+    await _upload(auth_client, name="x.pdf")
+    r2 = await _upload(auth_client, name="x.pdf")
+    assert r2.status_code == 201 and r2.json() == []
+    lst = await auth_client.get("/invoices")
+    assert len(lst.json()) == 1
 
 
 async def test_dedup_blocks_on_save(auth_client, mock_io) -> None:

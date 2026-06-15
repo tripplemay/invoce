@@ -45,6 +45,8 @@ export default function DashboardPage() {
       'application/pdf': ['.pdf'],
       'image/png': ['.png'],
       'image/jpeg': ['.jpg', '.jpeg'],
+      'application/zip': ['.zip'],
+      'application/x-zip-compressed': ['.zip'],
     },
   });
 
@@ -71,7 +73,7 @@ export default function DashboardPage() {
             {isDragActive ? '松手即可上传' : '拖拽发票到此，或点击选择'}
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            支持 PDF / PNG / JPG，可批量
+            支持 PDF / PNG / JPG / ZIP（如京东批量发票包，自动解出每张），可批量
           </p>
         </div>
         {error && <p className="mt-3 text-sm text-red-500">{error}</p>}

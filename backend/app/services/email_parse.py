@@ -62,13 +62,29 @@ _DATA_URI_RE = re.compile(r"data:(image/(?:png|jpe?g));base64,([A-Za-z0-9+/=\s]+
 _IMG_SRC_RE = re.compile(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', re.IGNORECASE)
 
 
+def _decode_bytes(data: bytes, charset: str | None) -> str:
+    """容错解码：声明的 charset 非法(如 unknown-8bit)时逐个回退，绝不抛异常。"""
+    for enc in (charset, "utf-8", "gbk", "latin-1"):
+        if not enc:
+            continue
+        try:
+            return data.decode(enc, errors="ignore")
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("latin-1", errors="ignore")
+
+
 def decode_mime_header(raw: str | None) -> str:
     if not raw:
         return ""
+    try:
+        decoded = decode_header(raw)
+    except Exception:  # noqa: BLE001 头部畸形时退化为原文，绝不让一封坏邮件中断整批归集
+        return str(raw)
     parts = []
-    for value, charset in decode_header(raw):
-        if isinstance(value, bytes):
-            parts.append(value.decode(charset or "utf-8", errors="ignore"))
+    for value, charset in decoded:
+        if isinstance(value, bytes | bytearray):
+            parts.append(_decode_bytes(bytes(value), charset))
         else:
             parts.append(value)
     return "".join(parts)
@@ -156,35 +172,45 @@ def extract_zip_pdfs(msg: Message) -> list[tuple[bytes, str]]:
         payload = part.get_payload(decode=True)
         if not isinstance(payload, bytes | bytearray):
             continue
-        data = bytes(payload)
-        # 按魔数识别 zip（不依赖 Content-Type / .zip 后缀），并卡住原始包大小防超大中央目录撑爆内存。
-        if data[:4] != b"PK\x03\x04" or len(data) > _MAX_ZIP_RAW_BYTES:
-            continue
-        try:
-            archive = zipfile.ZipFile(io.BytesIO(data))
-            infos = archive.infolist()[:_MAX_ZIP_ENTRIES]
-        except (zipfile.BadZipFile, OSError):
-            continue
-        total = 0
-        for info in infos:
-            member = _zip_member_basename(info)
-            if not member.lower().endswith(".pdf") or is_noise_filename(member):
-                continue
-            if info.file_size > _MAX_ZIP_PDF_BYTES:
-                continue  # 防 zip 炸弹：跳过解压后异常大的条目
-            try:
-                pdf = archive.read(info)
-            except (zipfile.BadZipFile, RuntimeError, OSError):
-                continue  # 加密/损坏的条目跳过，不阻断其它发票
-            if not pdf:
-                continue
-            total += len(pdf)
-            if total > _MAX_ZIP_TOTAL_BYTES:
-                break  # 单 zip 聚合解压超预算，停止
+        for pdf in pdfs_from_zip_bytes(bytes(payload)):
             files.append((pdf, "application/pdf"))
-            if len(files) >= _MAX_ZIP_PDFS:
-                break
     return files
+
+
+def pdfs_from_zip_bytes(data: bytes) -> list[bytes]:
+    """从 zip 原始字节解出标准发票 PDF（邮件附件与手动上传 ZIP 共用）。
+
+    按魔数识别 zip（不依赖后缀），按 basename(含 GBK 解码) 跳过汇总单/行程单等噪音，
+    并设原始包大小 / 扫描条目数 / 单 PDF / 聚合解压总量 / 取数 多重上限，防畸形 zip 撑爆内存。
+    """
+    pdfs: list[bytes] = []
+    if data[:4] != b"PK\x03\x04" or len(data) > _MAX_ZIP_RAW_BYTES:
+        return pdfs
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+        infos = archive.infolist()[:_MAX_ZIP_ENTRIES]
+    except (zipfile.BadZipFile, OSError):
+        return pdfs
+    total = 0
+    for info in infos:
+        member = _zip_member_basename(info)
+        if not member.lower().endswith(".pdf") or is_noise_filename(member):
+            continue
+        if info.file_size > _MAX_ZIP_PDF_BYTES:
+            continue  # 防 zip 炸弹：跳过解压后异常大的条目
+        try:
+            pdf = archive.read(info)
+        except (zipfile.BadZipFile, RuntimeError, OSError):
+            continue  # 加密/损坏的条目跳过，不阻断其它发票
+        if not pdf:
+            continue
+        total += len(pdf)
+        if total > _MAX_ZIP_TOTAL_BYTES:
+            break  # 聚合解压超预算，停止
+        pdfs.append(pdf)
+        if len(pdfs) >= _MAX_ZIP_PDFS:
+            break
+    return pdfs
 
 
 def extract_inline_base64_images(html: str) -> list[tuple[bytes, str]]:
