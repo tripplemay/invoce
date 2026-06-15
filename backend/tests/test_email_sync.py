@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 from app.models.email_account import EmailAccount
+from app.models.email_sync_log import EmailSyncLog
 from app.models.invoice import Invoice
 from app.models.user import User
 from app.services import email_sync
@@ -194,6 +195,69 @@ async def test_ingest_toll_extracts_zip_invoices(db_session, mock_storage) -> No
     status, count = await email_sync.ingest_email(db_session, acct, _toll_zip_email(), enqueue)
     assert (status, count) == ("SUCCESS", 2)  # zip 内 2 张发票；汇总单被剔除
     assert len(enq) == 2
+
+
+def _jd_link_email() -> bytes:
+    """京东式邮件：无附件，正文 HTML 含免登录预签名 PDF 直链（+ 营销跳转链噪音）。"""
+    html = (
+        "<html><body>您的京东订单电子发票已开具"
+        '<a href="https://tr.jd.com/jump/transfer?x=1">访问京东</a>'
+        '<a href="https://eicore-invoice-26.s3.cn-north-1.jdcloud-oss.com/digital-invoice/'
+        'digital_1.pdf?Signature=bbb">下载</a></body></html>'
+    )
+    m = EmailMessage()
+    m["Subject"] = "您的京东订单【1】电子发票已开具"
+    m["From"] = "京东JD.com <customer_service@jd.com>"
+    m.set_content("请查收发票")
+    m.add_alternative(html, subtype="html")
+    return m.as_bytes()
+
+
+async def test_ingest_jd_fetches_direct_link_pdf(db_session, mock_storage) -> None:
+    """京东链接式发票：无附件，但从正文白名单直链拉到 PDF → 入库（走与附件相同的管线）。"""
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    seen_urls: list[str] = []
+
+    async def fake_link_fetcher(urls: list[str]) -> list[bytes]:
+        seen_urls.extend(urls)
+        return [b"%PDF-jd-invoice"]
+
+    status, count = await email_sync.ingest_email(
+        db_session, acct, _jd_link_email(), enqueue, link_fetcher=fake_link_fetcher
+    )
+    assert (status, count) == ("SUCCESS", 1)
+    assert len(enq) == 1
+    # 只把白名单直链交给 fetcher，不含营销跳转链 tr.jd.com
+    assert any("jdcloud-oss.com" in u for u in seen_urls)
+    assert all("tr.jd.com" not in u for u in seen_urls)
+    inv = (await db_session.scalars(select(Invoice))).first()
+    assert inv.source == "email_auto" and inv.status == "processing"
+
+
+async def test_ingest_jd_link_fetch_failure_is_graceful(db_session, mock_storage) -> None:
+    """直链拉取失败（返回空）时：不崩、不入库，记 SUCCESS/0（留待回填重试），不阻断归集。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    async def fake_link_fetcher(urls: list[str]) -> list[bytes]:
+        return []
+
+    status, count = await email_sync.ingest_email(
+        db_session, acct, _jd_link_email(), enqueue, link_fetcher=fake_link_fetcher
+    )
+    assert (status, count) == ("SUCCESS", 0)
+    total = await db_session.scalar(select(func.count()).select_from(Invoice))
+    assert total == 0
+    # 不静默：有直链却没拉到 PDF 时留可查诊断，便于回填时定位
+    log = (await db_session.scalars(select(EmailSyncLog))).first()
+    assert log is not None and log.error_message and "待回填" in log.error_message
 
 
 async def test_sync_account_updates_uid(db_session, mock_storage) -> None:

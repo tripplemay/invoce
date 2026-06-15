@@ -23,7 +23,7 @@ from app.models.email_account import EmailAccount
 from app.models.email_sync_log import EmailSyncLog
 from app.models.enums import EmailSyncStatus, InvoiceSource, InvoiceStatus, ReimbursementStatus
 from app.models.invoice import Invoice
-from app.services import email_parse
+from app.services import email_parse, link_fetch
 
 Enqueue = Callable[[str], Awaitable[None]]
 Fetcher = Callable[[EmailAccount], Awaitable[list[tuple[int, bytes]]]]
@@ -38,7 +38,12 @@ MIN_IMAGE_BYTES = 8000
 
 
 async def ingest_email(
-    session: AsyncSession, account: EmailAccount, raw_bytes: bytes, enqueue: Enqueue
+    session: AsyncSession,
+    account: EmailAccount,
+    raw_bytes: bytes,
+    enqueue: Enqueue,
+    *,
+    link_fetcher: link_fetch.LinkFetcher = link_fetch.fetch_invoice_pdfs,
 ) -> tuple[str, int]:
     """处理单封邮件：返回 (状态, 新增发票数)。写 email_sync_logs 但不更新 last_sync_uid。"""
     msg = email.message_from_bytes(raw_bytes)
@@ -59,13 +64,25 @@ async def ingest_email(
         await session.commit()
         return (EmailSyncStatus.IGNORED.value, 0)
 
-    # 取标准发票文件：松散 PDF/图附件（已剔除汇总单/行程单等噪音）+ zip 内的发票 PDF（含一封多张）。
-    # 都没有时再回退到 HTML 内嵌 base64 图。不再下载外链图：基本是营销/跟踪图，是噪音也是 SSRF 风险面。
+    # 取标准发票文件，按权威性优先级：
+    # 1) 松散 PDF/图附件（已剔噪音）+ zip 内发票 PDF（含一封多张）；
+    # 2) 无附件时，抽正文白名单内的免登录发票直链并拉取 PDF（如京东 jdcloud-oss 预签名直链）；
+    # 3) 仍无则回退 HTML 内嵌 base64 图。
+    # 不再无差别下载正文外链：仅按域名白名单拉取发票直链，避免营销/跟踪图与 SSRF/钓鱼风险面。
     files = email_parse.extract_attachments(msg)
     files += email_parse.extract_zip_pdfs(msg)
+    link_fetch_pending = False  # 有发票直链却一张都没拉到 → 别静默成 SUCCESS/0，留可查诊断
     if not files:
-        for html in email_parse.html_parts(msg):
-            files += email_parse.extract_inline_base64_images(html)
+        htmls = email_parse.html_parts(msg)
+        links: list[str] = []
+        for html in htmls:
+            links += link_fetch.extract_invoice_pdf_links(html)
+        if links:
+            files += [(pdf, "application/pdf") for pdf in await link_fetcher(links)]
+            link_fetch_pending = not files
+        if not files:
+            for html in htmls:
+                files += email_parse.extract_inline_base64_images(html)
     # 丢弃过小图片（签名 logo / 跟踪像素）；PDF 始终保留。
     files = [(c, t) for (c, t) in files if t == "application/pdf" or len(c) >= MIN_IMAGE_BYTES]
 
@@ -97,6 +114,11 @@ async def ingest_email(
             continue
         created_ids.append(str(inv.id))
 
+    note = (
+        "检测到链接式发票直链但未拉到 PDF，待回填重试"
+        if link_fetch_pending and not created_ids
+        else None
+    )
     session.add(
         EmailSyncLog(
             user_id=account.user_id,
@@ -104,6 +126,7 @@ async def ingest_email(
             subject=subject,
             status=EmailSyncStatus.SUCCESS.value,
             invoice_count=len(created_ids),
+            error_message=note,
         )
     )
     await session.commit()
