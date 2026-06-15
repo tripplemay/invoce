@@ -39,6 +39,23 @@ async def test_upload_creates_processing_invoice(auth_client, mock_io) -> None:
     assert len(lst.json()) == 1
 
 
+async def test_list_orders_unreimbursed_newest_first(auth_client, mock_io) -> None:
+    """默认排序：待报销优先，组内按时间最新在前；已流转的(报销中/已完成)排其后。"""
+    a = (await _upload(auth_client, name="a.pdf")).json()[0]
+    b = (await _upload(auth_client, name="b.pdf")).json()[0]
+    c = (await _upload(auth_client, name="c.pdf")).json()[0]
+    await auth_client.patch(f"/invoices/{a['id']}", json={"issue_date": "2026-03-01"})
+    await auth_client.patch(f"/invoices/{b['id']}", json={"issue_date": "2026-05-01"})
+    await auth_client.patch(f"/invoices/{c['id']}", json={"issue_date": "2026-01-01"})
+    # B 日期最新，但推进到「报销中」后应排到所有待报销之后（状态优先于时间）
+    await auth_client.patch(
+        f"/invoices/{b['id']}/reimbursement-status", json={"reimbursement_status": "submitted"}
+    )
+    order = [i["id"] for i in (await auth_client.get("/invoices")).json()]
+    # 待报销 A(3月) > C(1月)，最后才是报销中的 B
+    assert order == [a["id"], c["id"], b["id"]]
+
+
 async def test_upload_rejects_bad_magic(auth_client, mock_io) -> None:
     # 即使谎报 content_type 为 pdf，魔数不符也应拒绝
     r = await auth_client.post(

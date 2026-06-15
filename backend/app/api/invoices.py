@@ -3,7 +3,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,7 +163,22 @@ async def list_invoices(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[Invoice]:
-    stmt = select(Invoice).where(Invoice.user_id == user.id).order_by(Invoice.created_at.desc())
+    # 默认排序：待报销的优先（用户最需处理的浮到最前），其次按时间最新在前。
+    # 时间轴用开票日期，缺失（刚同步未抽取）时回退入库时间，保证单调“最新在前”；同日按入库时间兜底。
+    status_priority = case(
+        (Invoice.reimbursement_status == ReimbursementStatus.UNREIMBURSED.value, 0),
+        (Invoice.reimbursement_status == ReimbursementStatus.SUBMITTED.value, 1),
+        else_=2,
+    )
+    stmt = (
+        select(Invoice)
+        .where(Invoice.user_id == user.id)
+        .order_by(
+            status_priority,
+            func.coalesce(Invoice.issue_date, cast(Invoice.created_at, Date)).desc(),
+            Invoice.created_at.desc(),
+        )
+    )
     if reimbursement_status:
         stmt = stmt.where(Invoice.reimbursement_status == reimbursement_status)
     rows = await session.scalars(stmt)
