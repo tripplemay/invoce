@@ -101,8 +101,28 @@ def test_is_noise_filename() -> None:
     assert email_parse.is_noise_filename("通行费电子票据汇总单(票据).pdf")
     assert email_parse.is_noise_filename("悦道用车行程单.pdf")
     assert email_parse.is_noise_filename("信用卡电子账单.pdf")
+    # 顺丰式"电子发票 + 发票运单明细"：运单明细/费用明细等清单类不是发票，应剔除
+    assert email_parse.is_noise_filename("发票运单明细.pdf")
+    assert email_parse.is_noise_filename("费用明细表.pdf")
+    assert email_parse.is_noise_filename("顺丰运单.pdf")
+    # 真发票本身（顺丰电子发票.pdf / 电子发票1.pdf）不应被误剔
+    assert not email_parse.is_noise_filename("顺丰电子发票.pdf")
     assert not email_parse.is_noise_filename("悦道用车电子发票1.pdf")
     assert not email_parse.is_noise_filename(None)
+
+
+def test_sf_email_keeps_invoice_drops_waybill_detail() -> None:
+    """顺丰邮件含「顺丰电子发票.pdf」+「发票运单明细.pdf」：只保留真发票，剔除运单明细。"""
+    m = EmailMessage()
+    m["Subject"] = "顺丰电子发票出票通知"
+    m.set_content("请查收")
+    m.add_attachment(
+        b"%PDF-invoice", maintype="application", subtype="pdf", filename="顺丰电子发票.pdf"
+    )
+    m.add_attachment(
+        b"%PDF-waybill", maintype="application", subtype="pdf", filename="发票运单明细.pdf"
+    )
+    assert email_parse.extract_attachments(m) == [(b"%PDF-invoice", "application/pdf")]
 
 
 def test_extract_inline_base64_images() -> None:
