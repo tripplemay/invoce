@@ -22,13 +22,28 @@ import httpx
 
 from app.core import netguard
 
-# 允许自动拉取的发票 CDN（均实测为免登录预签名直链 PDF）。京东用了多个发票 CDN：
-#   - 后缀匹配（带前导点 → 强制点边界）：JD自营新版 *.jdcloud-oss.com、POP第三方 *.jcloudcs.com；
-#   - 精确匹配（无子域，避免 evilstorage.jd.com 误命中）：JD自营旧版 storage.jd.com。
-# 新来源验证通过后按需追加。
-ALLOWED_HOST_EXACT: frozenset[str] = frozenset({"storage.jd.com"})
+# 允许自动拉取的发票 CDN/下载端点（均实测免登录返回 %PDF）。域名白名单是 SSRF 主控边界，
+# 只拉这些专用发票文件 host，绝不无差别跟链。新来源须先实测确认免登录直返 PDF 后再加。
+#   - 后缀匹配（带前导点 → 强制点边界）：京东自营新版 *.jdcloud-oss.com、京东 POP *.jcloudcs.com；
+#   - 精确匹配（无子域，避免 evilstorage.jd.com 这类误命中）：其余各家发票文件 host。
+ALLOWED_HOST_EXACT: frozenset[str] = frozenset(
+    {
+        "storage.jd.com",  # 京东自营旧版
+        "upload.fapiaoer.cn",  # 票易通（*.pdf 直链）
+        "xz.bwfapiao.com",  # 百望 OSS（*.pdf，http）
+        "inv.jss.com.cn",  # 诺诺/金税盘 文件服务（*.pdf）
+        "einvoice.taobao.com",  # 阿里发票平台 token 下载 API
+        "invoice.taobao.com",  # 阿里发票平台 token 下载 API
+        "fp.baiwang.com",  # 百望直链下载端点（http）
+        "fpkj.vpiaotong.com",  # 票通直链下载端点
+    }
+)
 ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (".jdcloud-oss.com", ".jcloudcs.com")
-# storage.jd.com / jcloudcs.com 的直链是 http（非 https）。域名白名单是主控边界，故放行 http；
+# 这些 host 的下载链接不以 .pdf 结尾（token/接口式端点），抽取时放行任意路径；fetch 仍以 %PDF 魔数兜底。
+DOWNLOAD_ENDPOINT_HOSTS: frozenset[str] = frozenset(
+    {"einvoice.taobao.com", "invoice.taobao.com", "fp.baiwang.com", "fpkj.vpiaotong.com"}
+)
+# 部分直链是 http（非 https，如 storage.jd.com / jcloudcs / 百望）。域名白名单是主控边界，故放行 http；
 # 仍叠 netguard IP 兜底 + follow_redirects=False + %PDF 魔数 + 端口限，http 不放大 SSRF 面。
 _ALLOWED_SCHEMES = ("https", "http")
 _ALLOWED_PORTS = (None, 443, 80)
@@ -64,17 +79,21 @@ def _accept_url(parsed: SplitResult) -> bool:
 
 
 def extract_invoice_pdf_links(html: str) -> list[str]:
-    """从 HTML 正文抽出白名单内的发票 PDF 直链（https + 命中白名单 host + 路径以 .pdf 结尾）。
+    """从 HTML 正文抽出白名单内的发票文件直链。命中条件：http/https + 命中白名单 host + 端口 80/443，
+    且（路径以 .pdf 结尾 或 host 是 token/接口式下载端点）。
 
     会还原 &amp; 等 HTML 实体（否则 URL 查询参数/签名错乱）；保序去重。
-    营销跳转链（tr.jd.com）、订阅链、以及 .xml 源数据链都不在此列。
+    营销跳转链（tr.jd.com）、订阅链、以及 .xml 源数据链（与 .pdf 同 host）都不在此列。
     """
     out: list[str] = []
     seen: set[str] = set()
     for raw in _HREF_RE.findall(html or ""):
         url = html_module.unescape(raw)
         parsed = urlsplit(url)
-        if not _accept_url(parsed) or not parsed.path.lower().endswith(".pdf"):
+        if not _accept_url(parsed):
+            continue
+        host = (parsed.hostname or "").strip().lower().rstrip(".")
+        if not (parsed.path.lower().endswith(".pdf") or host in DOWNLOAD_ENDPOINT_HOSTS):
             continue
         if url not in seen:
             seen.add(url)

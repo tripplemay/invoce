@@ -72,12 +72,39 @@ def test_is_allowed_host() -> None:
     assert link_fetch.is_allowed_host("eicore-invoice-26.s3.cn-north-1.jdcloud-oss.com")
     assert link_fetch.is_allowed_host("storage.jd.com")  # 精确
     assert link_fetch.is_allowed_host("oss.cn-north-1.jcloudcs.com")  # 后缀
+    # Tier-2 各家发票文件 host(精确)
+    assert link_fetch.is_allowed_host("einvoice.taobao.com")
+    assert link_fetch.is_allowed_host("fp.baiwang.com")
+    assert link_fetch.is_allowed_host("inv.jss.com.cn")
+    assert link_fetch.is_allowed_host("xz.bwfapiao.com")
     assert not link_fetch.is_allowed_host("evilstorage.jd.com")  # storage.jd.com 是精确,非后缀
     assert not link_fetch.is_allowed_host("storage.jd.com.evil.com")  # 精确伪装
+    assert not link_fetch.is_allowed_host("www.taobao.com")  # 只白名单 einvoice/invoice 子域,非全站
+    assert not link_fetch.is_allowed_host("pis.baiwang.com")  # 百望 JS 预览页 host,不在直链白名单
     assert not link_fetch.is_allowed_host("jdcloud-oss.com.evil.com")  # 后缀伪装
     assert not link_fetch.is_allowed_host("xjdcloud-oss.com")  # 无点边界
     assert not link_fetch.is_allowed_host("evil.com")
     assert not link_fetch.is_allowed_host("")
+
+
+def test_extract_tier2_direct_and_token_endpoints() -> None:
+    """Tier-2 各家:.pdf 直链按后缀收;token/接口式端点(不以 .pdf 结尾)按 host 收;非白名单页跳过。"""
+    html = (
+        '<a href="https://inv.jss.com.cn/group1/M00/x.pdf">诺诺pdf</a>'
+        '<a href="http://xz.bwfapiao.com/91/044/044_144.pdf?Expires=1&amp;OSSAccessKeyId=k">百望OSS</a>'
+        '<a href="https://einvoice.taobao.com//api/invoice/downloadMailInvoice?token=abc">淘宝token</a>'
+        '<a href="http://fp.baiwang.com/fp/d?d=DEADBEEF">百望直链端点</a>'
+        '<a href="https://fpkj.vpiaotong.com/e-inv/d/UUCabc.pt">票通端点</a>'
+        '<a href="https://pis.baiwang.com/title/previewInvoice.html?param=x">百望JS预览页(跳过)</a>'
+        '<a href="https://inv.jss.com.cn/help/index.html">白名单host但非pdf非端点(跳过)</a>'
+    )
+    assert link_fetch.extract_invoice_pdf_links(html) == [
+        "https://inv.jss.com.cn/group1/M00/x.pdf",
+        "http://xz.bwfapiao.com/91/044/044_144.pdf?Expires=1&OSSAccessKeyId=k",
+        "https://einvoice.taobao.com//api/invoice/downloadMailInvoice?token=abc",
+        "http://fp.baiwang.com/fp/d?d=DEADBEEF",
+        "https://fpkj.vpiaotong.com/e-inv/d/UUCabc.pt",
+    ]
 
 
 _PDF_URL = "https://eicore-invoice-26.s3.cn-north-1.jdcloud-oss.com/digital-invoice/digital_1.pdf?Signature=b"
