@@ -34,15 +34,19 @@ def upgrade() -> None:
         sa.Column("username", sa.String(length=255), nullable=True),
         sa.Column("enabled", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
     )
-    op.create_index(
-        "ix_telegram_accounts_chat_id", "telegram_accounts", ["chat_id"], unique=True
-    )
+    op.create_index("ix_telegram_accounts_chat_id", "telegram_accounts", ["chat_id"], unique=True)
     # invoices.source 放开到 telegram
     op.drop_constraint("ck_invoice_source", "invoices", type_="check")
     op.create_check_constraint(
@@ -52,8 +56,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint("ck_invoice_source", "invoices", type_="check")
-    op.create_check_constraint(
-        "ck_invoice_source", "invoices", "source IN ('manual','email_auto')"
-    )
+    op.create_check_constraint("ck_invoice_source", "invoices", "source IN ('manual','email_auto')")
     op.drop_index("ix_telegram_accounts_chat_id", table_name="telegram_accounts")
     op.drop_table("telegram_accounts")

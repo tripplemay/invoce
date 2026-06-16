@@ -60,7 +60,7 @@ def test_base_from_email(email: str, expected: str) -> None:
 def test_prod_requires_strong_inbound_secret() -> None:
     from app.core.config import Settings
 
-    base = dict(environment="production", jwt_secret="x" * 40, fernet_key="y" * 44)
+    base = {"environment": "production", "jwt_secret": "x" * 40, "fernet_key": "y" * 44}
     # 启用收票域但密钥过短 → 启动期即报错，避免端点静默 401
     with pytest.raises(ValueError):
         Settings(**base, inbound_email_domain=DOMAIN, inbound_webhook_secret="short")
