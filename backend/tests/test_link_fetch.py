@@ -198,3 +198,91 @@ async def test_fetch_invoice_pdfs_skips_failures(monkeypatch) -> None:
         ["https://x.jdcloud-oss.com/good.pdf", "https://x.jdcloud-oss.com/bad.pdf"]
     )
     assert out == [b"%PDF-ok"]
+
+
+# ---- fetch_user_url：用户主动发来的链接(无白名单,但保留 SSRF 防护) ----
+
+
+async def test_user_url_ok_returns_raw_bytes(allow_netguard) -> None:
+    def handler(_req):
+        return httpx.Response(200, content=b"%PDF-user")
+
+    data = await link_fetch.fetch_user_url(
+        "https://anysite.example.com/inv.pdf", transport=httpx.MockTransport(handler)
+    )
+    assert data == b"%PDF-user"  # 不限白名单 host，返回原始字节交调用方按魔数判定
+
+
+async def test_user_url_rejects_unsafe_ip(monkeypatch) -> None:
+    monkeypatch.setattr(link_fetch.netguard, "is_safe_url", lambda url: False)
+
+    def handler(_req):  # pragma: no cover - 不应发起
+        raise AssertionError("SSRF: must not fetch unsafe address")
+
+    assert (
+        await link_fetch.fetch_user_url(
+            "https://169.254.169.254/meta", transport=httpx.MockTransport(handler)
+        )
+        is None
+    )
+
+
+async def test_user_url_rejects_non_http_and_bad_port(allow_netguard) -> None:
+    def handler(_req):  # pragma: no cover
+        raise AssertionError("must not fetch")
+
+    t = httpx.MockTransport(handler)
+    assert await link_fetch.fetch_user_url("ftp://example.com/x", transport=t) is None
+    assert await link_fetch.fetch_user_url("https://example.com:8080/x", transport=t) is None
+
+
+async def test_user_url_follows_redirect_revalidated(allow_netguard) -> None:
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.path)
+        if req.url.path == "/redir":
+            return httpx.Response(302, headers={"location": "https://example.com/final.pdf"})
+        return httpx.Response(200, content=b"%PDF-final")
+
+    data = await link_fetch.fetch_user_url(
+        "https://example.com/redir", transport=httpx.MockTransport(handler)
+    )
+    assert data == b"%PDF-final" and seen == ["/redir", "/final.pdf"]
+
+
+async def test_user_url_redirect_to_internal_blocked(monkeypatch) -> None:
+    # 初始安全；跳转到内网 → 第二跳被 netguard 拒(逐跳校验)
+    monkeypatch.setattr(link_fetch.netguard, "is_safe_url", lambda url: "169.254" not in url)
+
+    def handler(_req):
+        return httpx.Response(302, headers={"location": "http://169.254.169.254/meta"})
+
+    assert (
+        await link_fetch.fetch_user_url(
+            "https://example.com/r", transport=httpx.MockTransport(handler)
+        )
+        is None
+    )
+
+
+async def test_user_url_too_many_redirects(allow_netguard) -> None:
+    def handler(_req):
+        return httpx.Response(302, headers={"location": "https://example.com/loop"})
+
+    assert (
+        await link_fetch.fetch_user_url(
+            "https://example.com/loop", transport=httpx.MockTransport(handler)
+        )
+        is None
+    )
+
+
+async def test_user_url_oversize(allow_netguard) -> None:
+    def handler(_req):
+        return httpx.Response(200, content=b"x" * 100)
+
+    data = await link_fetch.fetch_user_url(
+        "https://example.com/big", max_bytes=10, transport=httpx.MockTransport(handler)
+    )
+    assert data is None

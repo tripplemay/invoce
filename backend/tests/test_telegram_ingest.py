@@ -29,6 +29,15 @@ class FakeRedis:
     async def delete(self, k):
         self.store.pop(k, None)
 
+    async def incr(self, k):
+        cur = self.store.get(k)
+        v = (int(cur.decode()) if cur else 0) + 1
+        self.store[k] = str(v).encode()
+        return v
+
+    async def expire(self, k, ttl):
+        return True
+
     async def enqueue_job(self, name, *args):
         self.jobs.append((name, args))
 
@@ -176,3 +185,80 @@ async def test_plain_text_gets_help(db_session, tg_mocks) -> None:
 async def test_non_message_update_ignored(db_session, tg_mocks) -> None:
     await telegram_ingest.process_update(db_session, FakeRedis(), {"edited_message": {}})
     assert tg_mocks == []  # 无回复、不崩
+
+
+# ---- 链接解析：用户直接发文件链接 ----
+
+
+async def test_link_ingest_when_bound(db_session, tg_mocks, monkeypatch) -> None:
+    user = await _make_user(db_session)
+    await _bind_account(db_session, user, 444)
+
+    async def _fetch(url, **k):
+        return b"%PDF-from-link"
+
+    monkeypatch.setattr("app.services.link_fetch.fetch_user_url", _fetch)
+    redis = FakeRedis()
+    update = {"message": {"chat": {"id": 444}, "text": "看这张 https://x.example.com/invoice.pdf"}}
+    await telegram_ingest.process_update(db_session, redis, update)
+
+    inv = await db_session.scalar(select(Invoice))
+    assert inv is not None and inv.source == "telegram"
+    assert redis.jobs and redis.jobs[0][0] == "extract_invoice"
+    assert any("已从链接入库 1 张" in t for _, t in tg_mocks)
+
+
+async def test_link_unbound(db_session, tg_mocks) -> None:
+    update = {"message": {"chat": {"id": 1}, "text": "https://x.com/a.pdf"}}
+    await telegram_ingest.process_update(db_session, FakeRedis(), update)
+    assert await db_session.scalar(select(func.count()).select_from(Invoice)) == 0
+    assert any("还没绑定" in t for _, t in tg_mocks)
+
+
+async def test_link_fetch_fails(db_session, tg_mocks, monkeypatch) -> None:
+    user = await _make_user(db_session)
+    await _bind_account(db_session, user, 445)
+
+    async def _fetch(url, **k):
+        return None  # SSRF 拒 / 不可达 / 超大
+
+    monkeypatch.setattr("app.services.link_fetch.fetch_user_url", _fetch)
+    update = {"message": {"chat": {"id": 445}, "text": "http://169.254.169.254/meta"}}
+    await telegram_ingest.process_update(db_session, FakeRedis(), update)
+    assert await db_session.scalar(select(func.count()).select_from(Invoice)) == 0
+    assert any("链接无法下载" in t for _, t in tg_mocks)
+
+
+async def test_link_rate_limited(db_session, tg_mocks, monkeypatch) -> None:
+    """已绑定用户连发链接:超过每分钟上限后被限速,不再发起下载(防盲 SSRF 探测)。"""
+    user = await _make_user(db_session)
+    await _bind_account(db_session, user, 447)
+    calls = {"n": 0}
+
+    async def _fetch(url, **k):
+        calls["n"] += 1
+        return None
+
+    monkeypatch.setattr("app.services.link_fetch.fetch_user_url", _fetch)
+    redis = FakeRedis()
+    update = {"message": {"chat": {"id": 447}, "text": "http://x/y"}}
+    for _ in range(telegram_ingest.LINK_RATE_LIMIT_PER_MIN):
+        await telegram_ingest.process_update(db_session, redis, update)
+    assert calls["n"] == telegram_ingest.LINK_RATE_LIMIT_PER_MIN
+    await telegram_ingest.process_update(db_session, redis, update)  # 超限的第 N+1 次
+    assert calls["n"] == telegram_ingest.LINK_RATE_LIMIT_PER_MIN  # 未再发起下载
+    assert any("过于频繁" in t for _, t in tg_mocks)
+
+
+async def test_link_downloaded_but_not_a_file(db_session, tg_mocks, monkeypatch) -> None:
+    user = await _make_user(db_session)
+    await _bind_account(db_session, user, 446)
+
+    async def _fetch(url, **k):
+        return b"<html>just a page</html>"  # 网页而非文件
+
+    monkeypatch.setattr("app.services.link_fetch.fetch_user_url", _fetch)
+    update = {"message": {"chat": {"id": 446}, "text": "https://example.com/page"}}
+    await telegram_ingest.process_update(db_session, FakeRedis(), update)
+    assert await db_session.scalar(select(func.count()).select_from(Invoice)) == 0
+    assert any("不是可识别的发票" in t for _, t in tg_mocks)

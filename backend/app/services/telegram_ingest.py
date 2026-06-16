@@ -3,6 +3,7 @@
 容错优先：任何分支失败都尽量回复用户、不抛异常（webhook 早已应答）。
 """
 
+import re
 import uuid
 
 from arq.connections import ArqRedis
@@ -12,14 +13,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import telegram
 from app.models.enums import InvoiceSource
 from app.models.telegram_account import TelegramAccount
-from app.services import email_parse
+from app.services import email_parse, link_fetch
 from app.services.ingest import detect_file_type, persist_invoice_bytes
 
 LINK_CODE_PREFIX = "tg:link:"
 _HELP = (
-    "把发票文件(PDF / 图片 / ZIP)发给我即可自动入库。\n"
+    "把发票文件(PDF / 图片 / ZIP)发给我即可自动入库，也可以直接发文件链接。\n"
     "还没绑定?请在网页端打开「绑定 Telegram」生成绑定链接。"
 )
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+LINK_RATE_LIMIT_PER_MIN = 10  # 每用户每分钟链接下载上限（防已绑定用户用链接做盲 SSRF 端口探测）
+
+
+def _extract_url(text: str) -> str | None:
+    """从文本取第一个 http(s) 链接，去掉常见尾随标点。"""
+    m = _URL_RE.search(text or "")
+    return m.group(0).rstrip(".,;!?)]}'\"") if m else None
+
+
+async def _require_account(session: AsyncSession, chat_id: int) -> TelegramAccount | None:
+    """取已绑定且启用的账号；未绑定则回复提示并返回 None。"""
+    account = await session.scalar(
+        select(TelegramAccount).where(
+            TelegramAccount.chat_id == chat_id, TelegramAccount.enabled.is_(True)
+        )
+    )
+    if account is None:
+        await telegram.send_message(chat_id, "你还没绑定账号。请在网页端「绑定 Telegram」后再发。")
+    return account
 
 
 def _extract_file_id(message: dict) -> str | None:
@@ -87,34 +108,76 @@ async def _bind(
     )
 
 
-async def _handle_file(session: AsyncSession, redis: ArqRedis, chat_id: int, file_id: str) -> None:
-    account = await session.scalar(
-        select(TelegramAccount).where(
-            TelegramAccount.chat_id == chat_id, TelegramAccount.enabled.is_(True)
-        )
-    )
-    if account is None:
-        await telegram.send_message(
-            chat_id, "你还没绑定账号。请在网页端「绑定 Telegram」后再发文件。"
-        )
+async def _ingest_and_reply(
+    session: AsyncSession,
+    redis: ArqRedis,
+    chat_id: int,
+    user_id: uuid.UUID,
+    data: bytes,
+    *,
+    ok_prefix: str,
+    not_found_msg: str,
+) -> None:
+    """字节入库 + 入队 AI 抽取 + 回复（文件与链接两条路共用收尾）。"""
+    created = await _ingest_bytes(session, user_id, data)
+    if not created:
+        await session.rollback()
+        await telegram.send_message(chat_id, not_found_msg)
         return
-    user_id = account.user_id
+    await session.commit()
+    for inv_id in created:
+        await redis.enqueue_job("extract_invoice", inv_id)
+    await telegram.send_message(chat_id, f"✅ {ok_prefix}入库 {len(created)} 张发票，正在识别。")
+
+
+async def _handle_file(session: AsyncSession, redis: ArqRedis, chat_id: int, file_id: str) -> None:
+    account = await _require_account(session, chat_id)
+    if account is None:
+        return
     path = await telegram.get_file_path(file_id)
     data = await telegram.download_file(path) if path else None
     if not data:
         await telegram.send_message(chat_id, "文件下载失败或超过 20MB，请重试或改用网页上传。")
         return
-    created = await _ingest_bytes(session, user_id, data)
-    if not created:
-        await session.rollback()
+    await _ingest_and_reply(
+        session,
+        redis,
+        chat_id,
+        account.user_id,
+        data,
+        ok_prefix="已",
+        not_found_msg="没找到可识别的发票(需 PDF/图片，或含发票 PDF 的 ZIP)。",
+    )
+
+
+async def _handle_link(session: AsyncSession, redis: ArqRedis, chat_id: int, url: str) -> None:
+    account = await _require_account(session, chat_id)
+    if account is None:
+        return
+    # 限速：防已绑定用户用链接做盲 SSRF 端口探测（每用户每分钟上限）
+    rate_key = f"tg:linkrate:{account.user_id}"
+    count = await redis.incr(rate_key)
+    if count == 1:
+        await redis.expire(rate_key, 60)
+    if count > LINK_RATE_LIMIT_PER_MIN:
+        await telegram.send_message(chat_id, "链接请求过于频繁，请稍后再试。")
+        return
+    data = await link_fetch.fetch_user_url(url)
+    if data is None:
         await telegram.send_message(
-            chat_id, "没找到可识别的发票(需 PDF/图片，或含发票 PDF 的 ZIP)。"
+            chat_id,
+            "链接无法下载(可能不可达 / 内网地址 / 需登录 / 超大)。请确认是直接的文件链接。",
         )
         return
-    await session.commit()
-    for inv_id in created:
-        await redis.enqueue_job("extract_invoice", inv_id)
-    await telegram.send_message(chat_id, f"✅ 已入库 {len(created)} 张发票，正在识别。")
+    await _ingest_and_reply(
+        session,
+        redis,
+        chat_id,
+        account.user_id,
+        data,
+        ok_prefix="已从链接",
+        not_found_msg="下载到内容了，但不是可识别的发票文件(可能是网页而非直接文件链接)。请发 PDF/图片/ZIP 的直链。",
+    )
 
 
 async def process_update(session: AsyncSession, redis: ArqRedis, update: dict) -> None:
@@ -134,5 +197,9 @@ async def process_update(session: AsyncSession, redis: ArqRedis, update: dict) -
     file_id = _extract_file_id(message)
     if file_id:
         await _handle_file(session, redis, chat_id, file_id)
+        return
+    url = _extract_url(text)
+    if url:
+        await _handle_link(session, redis, chat_id, url)
         return
     await telegram.send_message(chat_id, _HELP)

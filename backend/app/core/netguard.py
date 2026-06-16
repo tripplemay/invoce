@@ -34,6 +34,8 @@ def is_safe_host(host: str) -> bool:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return False
+    if not infos:
+        return False  # 解析为空视为不安全（避免 all([]) == True 的漏放）
     return all(not _is_private_ip(str(info[4][0])) for info in infos)
 
 

@@ -16,7 +16,7 @@ import asyncio
 import html as html_module
 import re
 from collections.abc import Awaitable, Callable
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, urljoin, urlsplit
 
 import httpx
 
@@ -51,6 +51,9 @@ _ALLOWED_PORTS = (None, 443, 80)
 MAX_PDF_BYTES = 20 * 1024 * 1024  # 单张发票 PDF 上限
 # 单封邮件最多处理的直链数：防恶意邮件塞大量链接放大出网/并发面（正常京东一封=1 张）。
 MAX_LINKS_PER_EMAIL = 10
+# 用户主动发来的链接：无域名白名单（用户自己选的链接），但保留 SSRF 防护。
+MAX_USER_URL_BYTES = 50 * 1024 * 1024
+_MAX_REDIRECTS = 5
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; invoce-invoice-fetcher)"}
 
@@ -136,3 +139,60 @@ async def fetch_invoice_pdfs(urls: list[str]) -> list[bytes]:
     capped = urls[:MAX_LINKS_PER_EMAIL]
     results = await asyncio.gather(*(fetch_pdf(u) for u in capped))
     return [data for data in results if data is not None]
+
+
+def _ssrf_ok_sync(url: str) -> bool:
+    """同步 SSRF 闸：仅 http/https + 端口 80/443 + netguard(解析地址非私有/内网)。"""
+    parsed = urlsplit(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port not in _ALLOWED_PORTS:
+        return False
+    return netguard.is_safe_url(url)
+
+
+async def fetch_user_url(
+    url: str,
+    *,
+    max_bytes: int = MAX_USER_URL_BYTES,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> bytes | None:
+    """下载「用户主动发来的链接」并返回原始字节（类型由调用方按魔数判定）。
+
+    与 fetch_pdf 的区别：**无域名白名单**（链接是已绑定用户自己选的），但保留 SSRF 防护——
+    仅 http/https + 端口 80/443 + 每一跳都过 netguard（拒私有/内网/元数据地址）+ 手动逐跳跟随重定向
+    （follow_redirects=False，防重定向 SSRF）+ 大小上限 + 超时。绝不抛异常，失败返回 None。
+    注意：返回的字节不会回显给用户（仅尝试入库），故即便被 SSRF 命中也不构成内容外泄。
+    """
+    current = url
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, follow_redirects=False, timeout=_TIMEOUT, headers=_HEADERS
+        ) as client:
+            for _ in range(_MAX_REDIRECTS + 1):
+                if not await asyncio.to_thread(_ssrf_ok_sync, current):
+                    return None
+                async with client.stream("GET", current) as resp:
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location")
+                        if not loc:
+                            return None
+                        current = urljoin(current, loc)  # 解析相对跳转，下一轮重新过 SSRF 闸
+                        continue
+                    if resp.status_code != 200:
+                        return None
+                    if resp.headers.get("content-type", "").lower().startswith("text/"):
+                        return None  # 网页/登录页等，非文件（图片 image/* 仍放行）
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > max_bytes:
+                            return None
+                    return bytes(buf)
+    except (httpx.HTTPError, OSError):
+        return None
+    return None  # 重定向过多
