@@ -19,11 +19,17 @@ INBOUND_WEBHOOK_SECRET=<openssl rand -hex 32 生成的随机串>
 前提：`invoce.vpanel.cc`（或 `vpanel.cc`）的 DNS 托管在 Cloudflare（使用 Cloudflare 名称服务器，full setup）。
 
 1. **Email Routing**：进入该 zone → Email → Email Routing → 启用，按提示添加 Cloudflare 给出的 MX / SPF 记录。
-2. **Email Worker**：
-   - Workers & Pages → 新建 Worker，粘贴 `email-worker.js` 的内容并部署。
-   - 该 Worker → Settings → Variables：
-     - `WEBHOOK_URL` = `https://<对外域名>/api/inbound/email`（经 nginx 转发；nginx 把 `/api/` 去前缀代理到后端 `/inbound/email`）
-     - `WEBHOOK_SECRET` = 与后端 `INBOUND_WEBHOOK_SECRET` 完全一致（设为 Secret）。
+2. **Email Worker**（这是「Worker 代码」，**不是** Pages 静态站；千万别用 Workers & Pages 里「上传并部署 / 拖放静态文件」那个入口——它是给静态网站的，拖 `.js` 进去会报「至少找到了一个 JavaScript 文件，请改用 wrangler」）。两种正确方式二选一：
+
+   **方式 A · 控制台在线编辑器（推荐，无需命令行）**
+   - Workers & Pages → **Create（创建）** → 选 **Workers** 这一栏里的 **“Hello World” / 从代码开始**（不要选 “Import a repository”“Upload assets/Pages”）→ 命名如 `invoce-email-inbound` → Deploy 出一个默认 worker。
+   - 进该 Worker → **Edit code（编辑代码）**→ 全选删掉默认内容，粘贴本目录 `email-worker.js` 全文 → **Deploy**。
+   - 该 Worker → **Settings → Variables and Secrets**：
+     - 加变量 `WEBHOOK_URL` = `https://invoce.vpanel.cc/api/inbound/email`（明文）
+     - 加 **Secret** `WEBHOOK_SECRET` = 与后端 `INBOUND_WEBHOOK_SECRET` 完全一致。
+
+   **方式 B · wrangler CLI（即报错提示的方式）**
+   - 见本目录 `wrangler.toml` 顶部注释：`npx wrangler login` → `npx wrangler secret put WEBHOOK_SECRET` → `npx wrangler deploy`。`WEBHOOK_URL` 已写在 `wrangler.toml` 的 `[vars]`。
 3. **Catch-all 路由**：Email Routing → Routing rules → Catch-all address → Action 选 **Send to a Worker** → 选上面的 Worker。
    - 这样任意 `*@invoce.vpanel.cc` 都进同一个 Worker，无需为每个用户单独建规则。
 

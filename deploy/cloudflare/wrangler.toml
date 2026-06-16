@@ -1,0 +1,16 @@
+# Cloudflare Email Worker —— 专属收票邮箱入站转发（wrangler CLI 部署用）。
+#
+# 用法（在本目录 deploy/cloudflare/ 下执行）：
+#   npx wrangler login                      # 浏览器授权一次
+#   npx wrangler secret put WEBHOOK_SECRET  # 粘贴后端 .env 里的 INBOUND_WEBHOOK_SECRET
+#   npx wrangler deploy                     # 部署 Worker
+# 之后仍需在 Cloudflare 控制台：Email → Email Routing → Catch-all → Send to a Worker → 选 invoce-email-inbound
+# （catch-all 绑定只能在控制台设，wrangler 不接管该步）。
+
+name = "invoce-email-inbound"
+main = "email-worker.js"
+compatibility_date = "2026-06-16"
+
+# 非机密变量。WEBHOOK_SECRET 不放这里——用 `wrangler secret put WEBHOOK_SECRET`（加密存储）。
+[vars]
+WEBHOOK_URL = "https://invoce.vpanel.cc/api/inbound/email"
