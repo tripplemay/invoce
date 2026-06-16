@@ -54,7 +54,11 @@ async def ingest_raw_email(
     sender = email_parse.decode_mime_header(msg.get("From"))
     body = email_parse.body_text(msg)
 
-    if not email_parse.matches_keywords(subject, body):
+    keyword_ok = email_parse.matches_keywords(subject, body)
+    # IMAP 要扫整个收件箱：靠主题/正文关键词预筛，避免误收非发票邮件。
+    # 专属收票邮箱是用户主动投递、意图明确：不做关键词预筛——只要带 PDF/图附件或发票直链就收
+    # （哪怕主题是 "test"）。营销/钓鱼风险靠下游的附件类型 + 图片大小 + 噪音文件名过滤兜底。
+    if source != InvoiceSource.EMAIL_INBOUND.value and not keyword_ok:
         session.add(
             EmailSyncLog(
                 user_id=user_id,
@@ -83,7 +87,9 @@ async def ingest_raw_email(
         if links:
             files += [(pdf, "application/pdf") for pdf in await link_fetcher(links)]
             link_fetch_pending = not files
-        if not files:
+        # 正文内嵌 base64 图最易误收营销图/签名图：仅在关键词命中时才回退抽取
+        # （IMAP 走到这里必然已命中；inbound 主题无关键词时不冒这个险）。
+        if not files and keyword_ok:
             for html in htmls:
                 files += email_parse.extract_inline_base64_images(html)
     # 丢弃过小图片（签名 logo / 跟踪像素）；PDF 始终保留。

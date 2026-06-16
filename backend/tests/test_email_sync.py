@@ -77,6 +77,73 @@ async def test_ingest_ignores_non_invoice(db_session, mock_storage) -> None:
     assert total == 0
 
 
+def _no_keyword_pdf_email() -> bytes:
+    """主题/正文无发票关键词，但带 PDF 附件（模拟用户往专属收票邮箱直接发/转发）。"""
+    m = EmailMessage()
+    m["Subject"] = "test"
+    m["From"] = "becky@gmail.com"
+    m.set_content("hi")
+    m.add_attachment(b"%PDF-1.4", maintype="application", subtype="pdf", filename="a.pdf")
+    return m.as_bytes()
+
+
+async def test_inbound_ingests_pdf_despite_no_keywords(db_session, mock_storage) -> None:
+    """专属收票邮箱：主题无关键词也收 PDF 附件（意图明确，跳过关键词预筛）。"""
+    acct = await _make_account(db_session)
+    enq: list[str] = []
+
+    async def enqueue(iid: str) -> None:
+        enq.append(iid)
+
+    status, count = await email_sync.ingest_raw_email(
+        db_session, acct.user_id, _no_keyword_pdf_email(), enqueue, source="email_inbound"
+    )
+    assert (status, count) == ("SUCCESS", 1)
+    assert len(enq) == 1
+    inv = (await db_session.scalars(select(Invoice))).first()
+    assert inv.source == "email_inbound"
+
+
+async def test_imap_still_ignores_no_keywords(db_session, mock_storage) -> None:
+    """IMAP 归集：同样无关键词的邮件仍按旧逻辑忽略（不污染整收件箱扫描）。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    status, count = await email_sync.ingest_email(
+        db_session, acct, _no_keyword_pdf_email(), enqueue
+    )
+    assert (status, count) == ("IGNORED", 0)
+    total = await db_session.scalar(select(func.count()).select_from(Invoice))
+    assert total == 0
+
+
+async def test_inbound_inline_image_still_needs_keyword(db_session, mock_storage) -> None:
+    """专属收票邮箱：无附件、仅正文大内嵌图、主题无关键词 → 不收（防营销图误入）。"""
+    import base64
+
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    payload = b"\x89PNG\r\n" + b"x" * 20000  # > MIN_IMAGE_BYTES
+    b64 = base64.b64encode(payload).decode()
+    html = f'<html><body><img src="data:image/png;base64,{b64}"/></body></html>'
+    m = EmailMessage()
+    m["Subject"] = "hello"
+    m["From"] = "promo@shop.com"
+    m.set_content("hi")
+    m.add_alternative(html, subtype="html")
+    status, count = await email_sync.ingest_raw_email(
+        db_session, acct.user_id, m.as_bytes(), enqueue, source="email_inbound"
+    )
+    assert (status, count) == ("SUCCESS", 0)
+    total = await db_session.scalar(select(func.count()).select_from(Invoice))
+    assert total == 0
+
+
 def _inline_image_email(payload: bytes) -> bytes:
     """无附件、仅 HTML 内嵌 base64 图的发票邮件（用于校验附件优先 / 小图过滤）。"""
     import base64
