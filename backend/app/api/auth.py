@@ -9,6 +9,7 @@ from app.core.db import get_session
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.schemas.auth import Token, UserCreate, UserLogin, UserOut
+from app.services.inbox import generate_inbox_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -18,7 +19,11 @@ async def register(data: UserCreate, session: AsyncSession = Depends(get_session
     exists = await session.scalar(select(User).where(User.email == data.email))
     if exists is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "该邮箱已注册")
-    user = User(email=data.email, password_hash=hash_password(data.password))
+    user = User(
+        email=data.email,
+        password_hash=hash_password(data.password),
+        inbox_token=await generate_inbox_token(session, data.email),
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)

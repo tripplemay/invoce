@@ -1,11 +1,14 @@
 """ARQ Worker 配置：DB 会话注入 ctx；extract_invoice 任务（AI 抽取）。"""
 
+import uuid
+
 from arq import cron
 from arq.connections import RedisSettings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
-from app.services import telegram_ingest
+from app.models.enums import InvoiceSource
+from app.services import email_sync, telegram_ingest
 from app.services.email_sync import sync_all
 from app.services.extraction import run_extraction
 
@@ -41,8 +44,26 @@ async def process_telegram_update(ctx: dict, update: dict) -> str:
     return "ok"
 
 
+async def process_inbound_email(ctx: dict, user_id: str, raw: bytes) -> str:
+    """专属收票邮箱入站：原始 MIME → 复用 IMAP 同款解析/入库管线（webhook 已快速 200）。"""
+    maker = ctx["sessionmaker"]
+
+    async def enqueue(invoice_id: str) -> None:
+        await ctx["redis"].enqueue_job("extract_invoice", invoice_id)
+
+    async with maker() as session:
+        await email_sync.ingest_raw_email(
+            session,
+            uuid.UUID(user_id),
+            raw,
+            enqueue,
+            source=InvoiceSource.EMAIL_INBOUND.value,
+        )
+    return "ok"
+
+
 class WorkerSettings:
-    functions = [heartbeat, extract_invoice, process_telegram_update]
+    functions = [heartbeat, extract_invoice, process_telegram_update, process_inbound_email]
     # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
     cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)

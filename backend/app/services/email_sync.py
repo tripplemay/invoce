@@ -11,19 +11,18 @@
 """
 
 import email
+import uuid
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import storage
 from app.core.crypto import decrypt
 from app.models.email_account import EmailAccount
 from app.models.email_sync_log import EmailSyncLog
-from app.models.enums import EmailSyncStatus, InvoiceSource, InvoiceStatus, ReimbursementStatus
-from app.models.invoice import Invoice
+from app.models.enums import EmailSyncStatus, InvoiceSource
 from app.services import email_parse, link_fetch
+from app.services.ingest import persist_invoice_bytes
 
 Enqueue = Callable[[str], Awaitable[None]]
 Fetcher = Callable[[EmailAccount], Awaitable[list[tuple[int, bytes]]]]
@@ -37,15 +36,19 @@ MAX_PER_SYNC = 100
 MIN_IMAGE_BYTES = 8000
 
 
-async def ingest_email(
+async def ingest_raw_email(
     session: AsyncSession,
-    account: EmailAccount,
+    user_id: uuid.UUID,
     raw_bytes: bytes,
     enqueue: Enqueue,
     *,
+    source: str,
     link_fetcher: link_fetch.LinkFetcher = link_fetch.fetch_invoice_pdfs,
 ) -> tuple[str, int]:
-    """处理单封邮件：返回 (状态, 新增发票数)。写 email_sync_logs 但不更新 last_sync_uid。"""
+    """解析单封原始邮件 → 入库到 user_id 名下，返回 (状态, 新增发票数)。写 email_sync_logs。
+
+    IMAP 归集与「专属收票邮箱」入站共用此核心（各传自己的 user_id 与 source）。
+    """
     msg = email.message_from_bytes(raw_bytes)
     subject = email_parse.decode_mime_header(msg.get("Subject"))
     sender = email_parse.decode_mime_header(msg.get("From"))
@@ -54,7 +57,7 @@ async def ingest_email(
     if not email_parse.matches_keywords(subject, body):
         session.add(
             EmailSyncLog(
-                user_id=account.user_id,
+                user_id=user_id,
                 sender=sender,
                 subject=subject,
                 status=EmailSyncStatus.IGNORED.value,
@@ -89,30 +92,9 @@ async def ingest_email(
     created_ids: list[str] = []
     for content, ctype in files:
         ext = email_parse.ALLOWED_TYPES.get(ctype, ".jpg")
-        key = storage.build_key(str(account.user_id), content, ext)
-        # 幂等快路径：同一文件已入库则跳过，避免回填/重跑产生重复发票行。
-        dup = await session.scalar(
-            select(Invoice.id).where(Invoice.user_id == account.user_id, Invoice.file_key == key)
-        )
-        if dup:
-            continue
-        await storage.upload_bytes(key, content, ctype)
-        inv = Invoice(
-            user_id=account.user_id,
-            file_key=key,
-            source=InvoiceSource.EMAIL_AUTO.value,
-            status=InvoiceStatus.PROCESSING.value,
-            reimbursement_status=ReimbursementStatus.UNREIMBURSED.value,
-        )
-        # 幂等兜底：唯一约束 (user_id, file_key) 是去重终点。回填+增量并发时快路径可能漏判，
-        # 用 SAVEPOINT 隔离单文件插入，撞唯一约束即视为已存在、跳过且不入队，不连累同邮件其它附件。
-        try:
-            async with session.begin_nested():
-                session.add(inv)
-                await session.flush()
-        except IntegrityError:
-            continue
-        created_ids.append(str(inv.id))
+        inv = await persist_invoice_bytes(session, user_id, content, ext, ctype, source)
+        if inv is not None:
+            created_ids.append(str(inv.id))
 
     note = (
         "检测到链接式发票直链但未拉到 PDF，待回填重试"
@@ -121,7 +103,7 @@ async def ingest_email(
     )
     session.add(
         EmailSyncLog(
-            user_id=account.user_id,
+            user_id=user_id,
             sender=sender,
             subject=subject,
             status=EmailSyncStatus.SUCCESS.value,
@@ -133,6 +115,25 @@ async def ingest_email(
     for iid in created_ids:
         await enqueue(iid)
     return (EmailSyncStatus.SUCCESS.value, len(created_ids))
+
+
+async def ingest_email(
+    session: AsyncSession,
+    account: EmailAccount,
+    raw_bytes: bytes,
+    enqueue: Enqueue,
+    *,
+    link_fetcher: link_fetch.LinkFetcher = link_fetch.fetch_invoice_pdfs,
+) -> tuple[str, int]:
+    """IMAP 归集单封邮件（薄封装，沿用 EMAIL_AUTO 来源）。"""
+    return await ingest_raw_email(
+        session,
+        account.user_id,
+        raw_bytes,
+        enqueue,
+        source=InvoiceSource.EMAIL_AUTO.value,
+        link_fetcher=link_fetcher,
+    )
 
 
 def _extract_raw(resp) -> bytes:  # pragma: no cover - 依赖真实 IMAP 响应结构

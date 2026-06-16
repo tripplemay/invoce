@@ -2,7 +2,11 @@
 
 export type ReimbursementStatus = 'unreimbursed' | 'submitted' | 'reimbursed';
 export type InvoiceStatus = 'processing' | 'pending' | 'verified' | 'failed';
-export type InvoiceSource = 'manual' | 'email_auto' | 'telegram';
+export type InvoiceSource =
+  | 'manual'
+  | 'email_auto'
+  | 'telegram'
+  | 'email_inbound';
 
 export interface Invoice {
   id: string;
@@ -32,6 +36,7 @@ export const SOURCE_LABELS: Record<InvoiceSource, string> = {
   manual: '手动上传',
   email_auto: 'QQ邮箱',
   telegram: 'Telegram',
+  email_inbound: '收票邮箱',
 };
 
 export const STATUS_LABELS: Record<InvoiceStatus, string> = {

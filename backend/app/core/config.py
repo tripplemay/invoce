@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token)
 
+    # ---- 专属收票邮箱(入站) ----
+    inbound_email_domain: str = ""  # 如 invoce.vpanel.cc；为空则功能禁用
+    inbound_webhook_secret: str = ""  # Cloudflare Email Worker → 后端 webhook 的共享密钥
+
+    @property
+    def inbound_enabled(self) -> bool:
+        return bool(self.inbound_email_domain)
+
     # ---- CORS ----
     cors_origins: list[str] = ["http://localhost:3000"]
 
@@ -73,6 +81,9 @@ class Settings(BaseSettings):
             self.jwt_secret == _DEFAULT_JWT_SECRET or self.fernet_key == _DEFAULT_FERNET_KEY
         ):
             raise ValueError("生产环境必须设置非默认的 JWT_SECRET 与 FERNET_KEY")
+        # 启用收票域却没给够强度的 webhook 密钥 → 端点会静默对所有请求 401，必须拦在启动期
+        if self.is_production and self.inbound_enabled and len(self.inbound_webhook_secret) < 32:
+            raise ValueError("启用收票邮箱后,生产环境必须设置长度 ≥ 32 的 INBOUND_WEBHOOK_SECRET")
         return self
 
 

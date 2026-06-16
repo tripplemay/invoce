@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { MdCloudUpload } from 'react-icons/md';
 import EmailAccounts from 'components/invoices/EmailAccounts';
+import InboxAddress from 'components/invoices/InboxAddress';
 import TelegramBinding from 'components/invoices/TelegramBinding';
 import { uploadInvoices } from 'lib/invoices';
 
@@ -115,6 +116,7 @@ export default function DashboardPage() {
         )}
       </Card>
 
+      <InboxAddress />
       <EmailAccounts />
       <TelegramBinding />
     </div>
