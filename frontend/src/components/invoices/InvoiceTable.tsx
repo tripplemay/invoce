@@ -62,6 +62,16 @@ const HEAD = 'text-xs font-bold uppercase text-gray-500 dark:text-gray-400';
 const CELL = 'text-sm font-medium text-navy-700 dark:text-white';
 const dash = (v: string | null) => (v == null || v === '' ? '—' : v);
 
+/** 入库时间(created_at, ISO)→ 本地「YYYY-MM-DD HH:MM」。 */
+const fmtIngestTime = (iso: string): string => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(
+    d.getHours(),
+  )}:${p(d.getMinutes())}`;
+};
+
 interface Props {
   data: Invoice[];
   onSelect: (i: Invoice) => void;
@@ -163,6 +173,14 @@ export default function InvoiceTable({
           <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600 dark:bg-navy-700 dark:text-gray-300">
             {SOURCE_LABELS[info.getValue()]}
           </span>
+        ),
+      }),
+      columnHelper.accessor('created_at', {
+        header: () => <p className={HEAD}>入库时间</p>,
+        cell: (info) => (
+          <p className="whitespace-nowrap text-sm font-medium text-navy-700 dark:text-white">
+            {fmtIngestTime(info.getValue())}
+          </p>
         ),
       }),
       columnHelper.accessor('reimbursement_status', {
