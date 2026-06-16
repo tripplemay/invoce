@@ -55,11 +55,20 @@ def _extract_file_id(message: dict) -> str | None:
     return None
 
 
-async def _ingest_bytes(session: AsyncSession, user_id: uuid.UUID, content: bytes) -> list[str]:
-    """按 PDF/图片/ZIP 入库，返回新建发票 id 列表（走共享去重/落库；source=telegram）。"""
+async def _ingest_bytes(
+    session: AsyncSession, user_id: uuid.UUID, content: bytes
+) -> tuple[list[str], int]:
+    """按 PDF/图片/ZIP 入库。返回 (新建发票 id 列表, 识别到的发票文件数)。
+
+    recognized 统计"能识别为发票文件"的数量（无论是否因去重未新建），
+    用于区分"压根不是文件"与"是发票但之前已入库（重复）"——两者都使 created 为空，但提示应不同。
+    """
     created: list[str] = []
+    recognized = 0
     if content[:4] == b"PK\x03\x04":
-        for pdf in email_parse.pdfs_from_zip_bytes(content):
+        pdfs = email_parse.pdfs_from_zip_bytes(content)
+        recognized = len(pdfs)
+        for pdf in pdfs:
             inv = await persist_invoice_bytes(
                 session, user_id, pdf, ".pdf", "application/pdf", InvoiceSource.TELEGRAM.value
             )
@@ -68,13 +77,14 @@ async def _ingest_bytes(session: AsyncSession, user_id: uuid.UUID, content: byte
     else:
         detected = detect_file_type(content)
         if detected is not None:
+            recognized = 1
             ext, ctype = detected
             inv = await persist_invoice_bytes(
                 session, user_id, content, ext, ctype, InvoiceSource.TELEGRAM.value
             )
             if inv is not None:
                 created.append(str(inv.id))
-    return created
+    return created, recognized
 
 
 async def _bind(
@@ -119,15 +129,23 @@ async def _ingest_and_reply(
     not_found_msg: str,
 ) -> None:
     """字节入库 + 入队 AI 抽取 + 回复（文件与链接两条路共用收尾）。"""
-    created = await _ingest_bytes(session, user_id, data)
-    if not created:
+    created, recognized = await _ingest_bytes(session, user_id, data)
+    if recognized == 0:  # 压根不是可识别的发票文件
         await session.rollback()
         await telegram.send_message(chat_id, not_found_msg)
+        return
+    if not created:  # 是发票，但内容此前已入库（去重）——不是"不是文件"
+        await session.rollback()
+        await telegram.send_message(chat_id, "这张发票之前已经入库过了（重复），未重复添加。")
         return
     await session.commit()
     for inv_id in created:
         await redis.enqueue_job("extract_invoice", inv_id)
-    await telegram.send_message(chat_id, f"✅ {ok_prefix}入库 {len(created)} 张发票，正在识别。")
+    dup = recognized - len(created)
+    extra = f"（另有 {dup} 张此前已入库）" if dup > 0 else ""
+    await telegram.send_message(
+        chat_id, f"✅ {ok_prefix}入库 {len(created)} 张发票{extra}，正在识别。"
+    )
 
 
 async def _handle_file(session: AsyncSession, redis: ArqRedis, chat_id: int, file_id: str) -> None:

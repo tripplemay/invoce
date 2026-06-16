@@ -250,6 +250,27 @@ async def test_link_rate_limited(db_session, tg_mocks, monkeypatch) -> None:
     assert any("过于频繁" in t for _, t in tg_mocks)
 
 
+async def test_link_duplicate_reports_already_ingested(db_session, tg_mocks, monkeypatch) -> None:
+    """同一有效链接发第二次:去重,提示「已入库过(重复)」,而非误报「不是文件」(回归用户报障)。"""
+    user = await _make_user(db_session)
+    await _bind_account(db_session, user, 448)
+
+    async def _fetch(url, **k):
+        return b"%PDF-1.4 same-invoice"  # 两次同内容 → 同 sha → 去重
+
+    monkeypatch.setattr("app.services.link_fetch.fetch_user_url", _fetch)
+    redis = FakeRedis()
+    update = {"message": {"chat": {"id": 448}, "text": "https://x.com/inv.pdf"}}
+    await telegram_ingest.process_update(db_session, redis, update)  # 第一次
+    await telegram_ingest.process_update(db_session, redis, update)  # 第二次(同内容)
+
+    assert await db_session.scalar(select(func.count()).select_from(Invoice)) == 1  # 仍只 1 张
+    msgs = [t for _, t in tg_mocks]
+    assert any("已从链接入库 1 张" in m for m in msgs)  # 第一次成功
+    assert any("已经入库过了" in m for m in msgs)  # 第二次:重复提示
+    assert not any("不是可识别的发票" in m for m in msgs)  # 不应误报"不是文件"
+
+
 async def test_link_downloaded_but_not_a_file(db_session, tg_mocks, monkeypatch) -> None:
     user = await _make_user(db_session)
     await _bind_account(db_session, user, 446)
