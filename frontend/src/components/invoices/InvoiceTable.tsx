@@ -231,7 +231,7 @@ export default function InvoiceTable({
   });
 
   return (
-    <Card extra="w-full h-full px-6 pb-6 sm:overflow-x-auto">
+    <Card extra="w-full h-full px-6 pb-6">
       <div className="flex flex-wrap items-center gap-2 pt-5">
         {TABS.map((t) => (
           <button
