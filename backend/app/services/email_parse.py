@@ -160,6 +160,37 @@ def extract_attachments(msg: Message) -> list[tuple[bytes, str]]:
     return files
 
 
+def describe_candidate_files(msg: Message) -> list[str]:
+    """诊断用：列出邮件里“像附件”的部件及判定结果（文件名 / 魔数 / 是否噪音 / 大小）。
+
+    仅用于“收到邮件但 0 入库”时给出可读原因（OFD/噪音文件名/非 PDF 魔数/内联图等），不参与入库决策。
+    """
+    out: list[str] = []
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        raw_fn = part.get_filename()
+        filename = decode_mime_header(raw_fn) if raw_fn else None
+        disposition = part.get_content_disposition()
+        if disposition != "attachment" and not filename:
+            continue  # 正文部件
+        payload = part.get_payload(decode=True)
+        size = len(payload) if isinstance(payload, bytes | bytearray) else 0
+        sniff = _sniff_type(bytes(payload)) if size else None
+        if is_noise_filename(filename):
+            reason = "噪音文件名(明细/账单等)被剔"
+        elif sniff == "application/pdf":
+            reason = "PDF✓"
+        elif sniff == "application/zip":
+            reason = "zip(取其中PDF)"
+        elif sniff in ("image/png", "image/jpeg"):
+            reason = "图片附件✓" if disposition == "attachment" else "内联图忽略"
+        else:
+            reason = f"非PDF/图(魔数={sniff or '未知'})"
+        out.append(f"{filename or part.get_content_type()}[{reason},{size}B]")
+    return out
+
+
 def extract_zip_pdfs(msg: Message) -> list[tuple[bytes, str]]:
     """从 zip 附件中解出标准发票 PDF。
 

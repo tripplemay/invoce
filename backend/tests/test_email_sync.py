@@ -144,6 +144,47 @@ async def test_inbound_inline_image_still_needs_keyword(db_session, mock_storage
     assert total == 0
 
 
+async def test_inbound_dedup_records_note(db_session, mock_storage) -> None:
+    """收票邮箱：重复发同一 PDF，第二次 0 入库且日志注明“重复（去重）”。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    raw = _no_keyword_pdf_email()
+    await email_sync.ingest_raw_email(
+        db_session, acct.user_id, raw, enqueue, source="email_inbound"
+    )
+    s, c = await email_sync.ingest_raw_email(
+        db_session, acct.user_id, raw, enqueue, source="email_inbound"
+    )
+    assert (s, c) == ("SUCCESS", 0)
+    notes = (await db_session.scalars(select(EmailSyncLog.error_message))).all()
+    assert any("重复" in (n or "") for n in notes)
+
+
+async def test_inbound_noise_attachment_records_diagnostic(db_session, mock_storage) -> None:
+    """收票邮箱：附件是噪音文件名 PDF（对账单）→ 0 入库且日志列出附件诊断。"""
+    acct = await _make_account(db_session)
+
+    async def enqueue(iid: str) -> None:
+        pass
+
+    m = EmailMessage()
+    m["Subject"] = "test"
+    m["From"] = "becky@gmail.com"
+    m.set_content("hi")
+    m.add_attachment(b"%PDF-x", maintype="application", subtype="pdf", filename="对账单.pdf")
+    s, c = await email_sync.ingest_raw_email(
+        db_session, acct.user_id, m.as_bytes(), enqueue, source="email_inbound"
+    )
+    assert (s, c) == ("SUCCESS", 0)
+    notes = (await db_session.scalars(select(EmailSyncLog.error_message))).all()
+    joined = " ".join(n or "" for n in notes)
+    assert "未发现可识别发票文件" in joined
+    assert "对账单.pdf" in joined and "噪音" in joined
+
+
 def _inline_image_email(payload: bytes) -> bytes:
     """无附件、仅 HTML 内嵌 base64 图的发票邮件（用于校验附件优先 / 小图过滤）。"""
     import base64

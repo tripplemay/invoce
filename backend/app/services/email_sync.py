@@ -102,11 +102,18 @@ async def ingest_raw_email(
         if inv is not None:
             created_ids.append(str(inv.id))
 
-    note = (
-        "检测到链接式发票直链但未拉到 PDF，待回填重试"
-        if link_fetch_pending and not created_ids
-        else None
-    )
+    note: str | None = None
+    if link_fetch_pending and not created_ids:
+        note = "检测到链接式发票直链但未拉到 PDF，待回填重试"
+    elif source == InvoiceSource.EMAIL_INBOUND.value and not created_ids:
+        # 收票邮箱专属诊断：收到邮件却 0 入库时，把原因写进日志（去重 / 噪音 / 非PDF / 无附件）
+        if files:
+            note = f"收到 {len(files)} 个发票文件，但与库中已有发票重复（去重），未新增"
+        else:
+            desc = email_parse.describe_candidate_files(msg)
+            note = "未发现可识别发票文件（PDF/图片附件）" + (
+                "；附件诊断: " + " | ".join(desc) if desc else "；邮件无附件"
+            )
     session.add(
         EmailSyncLog(
             user_id=user_id,
