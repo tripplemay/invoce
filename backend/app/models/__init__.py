@@ -5,6 +5,7 @@ from app.models.email_account import EmailAccount
 from app.models.email_sync_log import EmailSyncLog
 from app.models.invoice import Invoice
 from app.models.seller_category_rule import SellerCategoryRule
+from app.models.telegram_account import TelegramAccount
 from app.models.user import User
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "Invoice",
     "SellerCategoryRule",
     "EmailSyncLog",
+    "TelegramAccount",
 ]

@@ -45,7 +45,7 @@ class Invoice(UUIDPKMixin, TimestampMixin, Base):
             "reimbursement_status IN ('unreimbursed','submitted','reimbursed')",
             name="ck_invoice_reimbursement_status",
         ),
-        CheckConstraint("source IN ('manual','email_auto')", name="ck_invoice_source"),
+        CheckConstraint("source IN ('manual','email_auto','telegram')", name="ck_invoice_source"),
         # 文件级去重的数据库权威：同一用户同一文件(sha256)只允许一行（含手动上传与邮件归集）。
         # 让 DB 成为去重终点，杜绝并发(回填+cron / 双击上传 / 前端重试)产生的重复发票行。
         Index("uq_invoice_user_file", "user_id", "file_key", unique=True),

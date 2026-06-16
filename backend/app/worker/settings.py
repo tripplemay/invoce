@@ -5,6 +5,7 @@ from arq.connections import RedisSettings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+from app.services import telegram_ingest
 from app.services.email_sync import sync_all
 from app.services.extraction import run_extraction
 
@@ -32,8 +33,16 @@ async def extract_invoice(ctx: dict, invoice_id: str) -> str:
     return "ok"
 
 
+async def process_telegram_update(ctx: dict, update: dict) -> str:
+    """Telegram webhook 入队的更新：绑定 / 文件入库（webhook 已快速 200）。"""
+    maker = ctx["sessionmaker"]
+    async with maker() as session:
+        await telegram_ingest.process_update(session, ctx["redis"], update)
+    return "ok"
+
+
 class WorkerSettings:
-    functions = [heartbeat, extract_invoice]
+    functions = [heartbeat, extract_invoice, process_telegram_update]
     # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
     cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)

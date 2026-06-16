@@ -25,6 +25,7 @@ class InvoiceSource(StrEnum):
 
     MANUAL = "manual"  # 手动上传
     EMAIL_AUTO = "email_auto"  # QQ 邮箱自动归集
+    TELEGRAM = "telegram"  # Telegram bot 发送
 
 
 class EmailSyncStatus(StrEnum):

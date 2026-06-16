@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     # ---- IMAP ----
     imap_poll_interval_seconds: int = 1800
 
+    # ---- Telegram Bot ----
+    telegram_bot_token: str = ""  # @BotFather 颁发；为空则功能禁用
+    telegram_bot_username: str = ""  # 不含 @，用于生成绑定深链 t.me/<username>?start=<code>
+    telegram_webhook_secret: str = ""  # webhook 校验 X-Telegram-Bot-Api-Secret-Token
+    telegram_api_base: str = "https://api.telegram.org"  # 可覆盖便于测试
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.telegram_bot_token)
+
     # ---- CORS ----
     cors_origins: list[str] = ["http://localhost:3000"]
 

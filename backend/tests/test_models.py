@@ -32,5 +32,5 @@ def test_invoice_dedup_index_is_partial_and_nulls_not_distinct() -> None:
 def test_enum_values_match_prd() -> None:
     assert {s.value for s in InvoiceStatus} == {"processing", "pending", "verified", "failed"}
     assert {s.value for s in ReimbursementStatus} == {"unreimbursed", "submitted", "reimbursed"}
-    assert {s.value for s in InvoiceSource} == {"manual", "email_auto"}
+    assert {s.value for s in InvoiceSource} == {"manual", "email_auto", "telegram"}
     assert {s.value for s in EmailSyncStatus} == {"SUCCESS", "FAILED", "IGNORED"}

@@ -4,7 +4,6 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import Date, case, cast, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -29,23 +28,13 @@ from app.schemas.invoice import (
 )
 from app.services import email_parse
 from app.services.export import build_export_zip
+from app.services.ingest import detect_file_type, persist_invoice_bytes
 from app.services.seller_category import upsert_rule
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 单个 PDF/图片上限 15MB
 MAX_ZIP_SIZE = 64 * 1024 * 1024  # 批量发票 ZIP 上限 64MB（如京东发票中心批量下载包）
-
-
-def detect_file_type(content: bytes) -> tuple[str, str] | None:
-    """按魔数判定类型，不信任客户端 Content-Type。返回 (扩展名, content_type)。"""
-    if content[:4] == b"%PDF":
-        return (".pdf", "application/pdf")
-    if content[:8].startswith(b"\x89PNG\r\n\x1a\n"):
-        return (".png", "image/png")
-    if content[:3] == b"\xff\xd8\xff":
-        return (".jpg", "image/jpeg")
-    return None
 
 
 _REIMBURSE_ORDER = {
@@ -93,28 +82,10 @@ async def _find_duplicate(
 async def _persist_invoice(
     session: AsyncSession, user: User, content: bytes, ext: str, ctype: str
 ) -> Invoice | None:
-    """落库一张发票：同用户同文件(file_key)已存在则跳过(去重)，返回新建的 Invoice 或 None。"""
-    key = storage.build_key(str(user.id), content, ext)
-    if await session.scalar(
-        select(Invoice.id).where(Invoice.user_id == user.id, Invoice.file_key == key)
-    ):
-        return None  # 快路径去重
-    await storage.upload_bytes(key, content, ctype)
-    inv = Invoice(
-        user_id=user.id,
-        file_key=key,
-        source=InvoiceSource.MANUAL.value,
-        status=InvoiceStatus.PROCESSING.value,
-        reimbursement_status=ReimbursementStatus.UNREIMBURSED.value,
+    """落库一张手动上传的发票（共享去重/上传/落库逻辑见 services.ingest）。"""
+    return await persist_invoice_bytes(
+        session, user.id, content, ext, ctype, InvoiceSource.MANUAL.value
     )
-    # 用 SAVEPOINT 隔离插入：并发下撞 (user_id,file_key) 唯一约束即视为已存在、跳过。
-    try:
-        async with session.begin_nested():
-            session.add(inv)
-            await session.flush()
-    except IntegrityError:
-        return None
-    return inv
 
 
 @router.post("/upload", response_model=list[InvoiceOut], status_code=status.HTTP_201_CREATED)
