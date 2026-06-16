@@ -3,6 +3,7 @@
 from app.models.base import Base
 from app.models.email_account import EmailAccount
 from app.models.email_sync_log import EmailSyncLog
+from app.models.export_task import ExportTask
 from app.models.invoice import Invoice
 from app.models.seller_category_rule import SellerCategoryRule
 from app.models.telegram_account import TelegramAccount
@@ -16,4 +17,5 @@ __all__ = [
     "SellerCategoryRule",
     "EmailSyncLog",
     "TelegramAccount",
+    "ExportTask",
 ]

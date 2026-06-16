@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import hashlib
+import urllib.parse
 from functools import lru_cache
 
 import boto3
@@ -61,11 +62,19 @@ async def delete_object(key: str) -> None:
     await asyncio.to_thread(_del)
 
 
-async def presigned_get_url(key: str, expires: int | None = None) -> str:
+async def presigned_get_url(
+    key: str, expires: int | None = None, download_filename: str | None = None
+) -> str:
+    params: dict[str, str] = {"Bucket": settings.s3_bucket, "Key": key}
+    if download_filename:
+        # 让浏览器按附件下载并用友好文件名（RFC 5987，兼容中文名）。
+        quoted = urllib.parse.quote(download_filename)
+        params["ResponseContentDisposition"] = f"attachment; filename*=UTF-8''{quoted}"
+
     def _sign() -> str:
         return _client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.s3_bucket, "Key": key},
+            Params=params,
             ExpiresIn=expires or settings.presigned_expire_seconds,
         )
 

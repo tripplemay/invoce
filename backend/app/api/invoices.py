@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,14 +20,12 @@ from app.schemas.invoice import (
     BulkStatusUpdate,
     DuplicateCheckIn,
     DuplicateCheckOut,
-    ExportRequest,
     InvoiceOut,
     InvoiceUpdate,
     PreviewOut,
     ReimbursementStatusUpdate,
 )
 from app.services import email_parse
-from app.services.export import build_export_zip
 from app.services.ingest import detect_file_type, persist_invoice_bytes
 from app.services.seller_category import upsert_rule
 
@@ -175,36 +173,6 @@ async def check_duplicate(
             existing_date=dup.issue_date or dup.created_at.date(),
         )
     return DuplicateCheckOut(duplicate=False)
-
-
-@router.post("/export")
-async def export_invoices(
-    data: ExportRequest,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> Response:
-    rows = list(
-        await session.scalars(
-            select(Invoice).where(Invoice.user_id == user.id, Invoice.id.in_(data.invoice_ids))
-        )
-    )
-    if not rows:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "未找到要导出的发票")
-
-    zip_bytes = await build_export_zip(rows, storage.download_bytes)
-
-    # 导出即提交流转：勾选的待报销票批量原子化改为报销中
-    if data.mark_submitted:
-        for inv in rows:
-            if inv.reimbursement_status == ReimbursementStatus.UNREIMBURSED.value:
-                inv.reimbursement_status = ReimbursementStatus.SUBMITTED.value
-        await session.commit()
-
-    return Response(
-        content=zip_bytes,
-        media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="reimbursement.zip"'},
-    )
 
 
 async def _owned_invoices(

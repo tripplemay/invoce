@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.models.enums import InvoiceSource
 from app.services import email_sync, telegram_ingest
 from app.services.email_sync import sync_all
+from app.services.export_runner import run_export_task
 from app.services.extraction import run_extraction
 
 
@@ -62,8 +63,22 @@ async def process_inbound_email(ctx: dict, user_id: str, raw: bytes) -> str:
     return "ok"
 
 
+async def run_export(ctx: dict, task_id: str) -> str:
+    """报销单导出任务：异步打包 ZIP → 上传 R2 → 回填结果（webhook 已快速 201）。"""
+    maker = ctx["sessionmaker"]
+    async with maker() as session:
+        await run_export_task(session, uuid.UUID(task_id))
+    return "ok"
+
+
 class WorkerSettings:
-    functions = [heartbeat, extract_invoice, process_telegram_update, process_inbound_email]
+    functions = [
+        heartbeat,
+        extract_invoice,
+        process_telegram_update,
+        process_inbound_email,
+        run_export,
+    ]
     # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
     cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)

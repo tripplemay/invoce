@@ -35,3 +35,12 @@ class EmailSyncStatus(StrEnum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     IGNORED = "IGNORED"
+
+
+class ExportTaskStatus(StrEnum):
+    """报销单导出任务状态（异步）。"""
+
+    PENDING = "pending"  # 已创建，排队中
+    PROCESSING = "processing"  # 生成中（worker 打包）
+    COMPLETED = "completed"  # 已完成，可下载
+    FAILED = "failed"  # 生成失败

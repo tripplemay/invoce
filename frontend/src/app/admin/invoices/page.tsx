@@ -3,14 +3,15 @@ import Button from 'components/button';
 import Dropdown from 'components/dropdown';
 import InvoiceDrawer from 'components/invoices/InvoiceDrawer';
 import InvoiceTable from 'components/invoices/InvoiceTable';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   bulkChangeStatus,
   bulkDeleteInvoices,
   changeReimbursementStatus,
-  exportInvoices,
   listInvoices,
 } from 'lib/invoices';
+import { createExportTask } from 'lib/exportTasks';
 import { Invoice, REIMBURSEMENT_LABELS, ReimbursementStatus } from 'lib/types';
 
 const BULK_STATUSES: ReimbursementStatus[] = [
@@ -20,6 +21,7 @@ const BULK_STATUSES: ReimbursementStatus[] = [
 ];
 
 export default function InvoicesPage() {
+  const router = useRouter();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Invoice | null>(null);
@@ -85,10 +87,12 @@ export default function InvoicesPage() {
   async function doExport(markSubmitted: boolean) {
     setExporting(true);
     try {
-      await exportInvoices([...checked], markSubmitted);
+      await createExportTask([...checked], markSubmitted);
       setChecked(new Set());
       setShowModal(false);
       await refresh();
+      // 异步生成：跳到导出任务页查看进度并下载
+      router.push('/admin/export-tasks');
     } catch {
       /* ignore */
     } finally {
@@ -184,8 +188,8 @@ export default function InvoicesPage() {
               导出报销单
             </h3>
             <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
-              报销单 Excel 与原件将打包为 ZIP 下载。是否同步将选中的{' '}
-              {checked.size} 张发票状态变更为「报销中」？
+              将为选中的 {checked.size} 张发票后台生成报销单（对账 Excel + 原件
+              ZIP），完成后可在「导出任务」页下载。是否同步将其状态变更为「报销中」？
             </p>
             <div className="mt-6 flex flex-col gap-2">
               <Button
@@ -193,7 +197,7 @@ export default function InvoicesPage() {
                 disabled={exporting}
                 onClick={() => doExport(true)}
               >
-                {exporting ? '导出中…' : '导出并标记为「报销中」'}
+                {exporting ? '创建中…' : '创建任务并标记「报销中」'}
               </Button>
               <Button
                 variant="secondary"
@@ -201,7 +205,7 @@ export default function InvoicesPage() {
                 disabled={exporting}
                 onClick={() => doExport(false)}
               >
-                仅导出，不改状态
+                仅创建任务，不改状态
               </Button>
               <Button
                 variant="ghost"

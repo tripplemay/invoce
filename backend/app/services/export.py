@@ -1,5 +1,6 @@
 """导出报销单：生成对账 Excel + 原件重命名打包 ZIP。"""
 
+import asyncio
 import io
 import re
 import zipfile
@@ -50,15 +51,28 @@ def build_excel(invoices: Sequence[Invoice]) -> bytes:
 
 
 async def build_export_zip(invoices: Sequence[Invoice], file_loader: FileLoader) -> bytes:
+    """下载原件(IO, async) + 打包 ZIP(CPU, 丢线程池避免阻塞 worker 事件循环)。"""
+    loaded: list[tuple[Invoice, bytes]] = []
+    failed: list[Invoice] = []
+    for inv in invoices:
+        try:
+            loaded.append((inv, await file_loader(inv.file_key)))
+        except Exception:  # noqa: BLE001 个别原件下载失败不阻断整体导出
+            failed.append(inv)
+    return await asyncio.to_thread(_assemble_zip, list(invoices), loaded, failed)
+
+
+def _assemble_zip(
+    invoices: Sequence[Invoice],
+    loaded: Sequence[tuple[Invoice, bytes]],
+    failed: Sequence[Invoice],
+) -> bytes:
+    """同步 CPU 部分：Excel 序列化 + zip 压缩（由 build_export_zip 在线程里调用）。"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("invoices_export.xlsx", build_excel(invoices))
         used: set[str] = set()
-        for inv in invoices:
-            try:
-                content = await file_loader(inv.file_key)
-            except Exception:  # noqa: BLE001 个别原件下载失败不阻断
-                continue
+        for inv, content in loaded:
             base = f"{inv.issue_date or 'NA'}_{_sanitize(inv.seller_name)}_{inv.total_amount or 0}"
             name = f"{base}{_ext(inv.file_key)}"
             idx = 1
@@ -67,4 +81,13 @@ async def build_export_zip(invoices: Sequence[Invoice], file_loader: FileLoader)
                 idx += 1
             used.add(name)
             z.writestr(f"原件/{name}", content)
+        if failed:
+            lines = "\n".join(
+                f"{inv.issue_date or 'NA'} {inv.seller_name or ''} {inv.total_amount or ''}"
+                for inv in failed
+            )
+            z.writestr(
+                "原件/_缺失原件清单.txt",
+                f"以下 {len(failed)} 张发票的原件下载失败，未包含在本压缩包：\n{lines}\n",
+            )
     return buf.getvalue()
