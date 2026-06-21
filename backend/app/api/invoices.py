@@ -1,6 +1,7 @@
 """发票核心：上传(S3+入队) / 列表 / 详情 / 校对保存(防重) / 报销流转 / 删除 / 60s 预览。"""
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import Date, case, cast, func, select
@@ -25,6 +26,7 @@ from app.schemas.invoice import (
     PreviewOut,
     ReimbursementStatusUpdate,
 )
+from app.schemas.stats import CategoryStat, MonthStat, StatBucket, StatsOut
 from app.services import email_parse
 from app.services.ingest import detect_file_type, persist_invoice_bytes
 from app.services.seller_category import upsert_rule
@@ -155,6 +157,86 @@ async def list_invoices(
         stmt = stmt.where(Invoice.reimbursement_status == reimbursement_status)
     rows = await session.scalars(stmt)
     return list(rows)
+
+
+def _fill_months(data: dict[str, tuple[float, int]]) -> list[MonthStat]:
+    """把离散月份补成 min~max 连续序列（缺月填 0），避免趋势图等距类目轴失真。"""
+    if not data:
+        return []
+    months = sorted(data)
+    y, m = int(months[0][:4]), int(months[0][5:7])
+    ey, em = int(months[-1][:4]), int(months[-1][5:7])
+    out: list[MonthStat] = []
+    while (y, m) <= (ey, em):
+        key = f"{y:04d}-{m:02d}"
+        amt, cnt = data.get(key, (0.0, 0))
+        out.append(MonthStat(month=key, amount=amt, count=cnt))
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return out
+
+
+@router.get("/stats", response_model=StatsOut)
+async def invoice_stats(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StatsOut:
+    """消费分析聚合：总计 / 报销三态 / 分类占比 / 月度趋势，全部服务端 SQL 聚合。
+
+    口径：只统计已抽出金额的发票（total_amount 非空，即 pending/verified，排除 processing/failed）。
+    给定日期区间时按 issue_date 过滤（区间内 issue_date 为空者天然排除）。
+    """
+    conds = [Invoice.user_id == user.id, Invoice.total_amount.is_not(None)]
+    if date_from is not None:
+        conds.append(Invoice.issue_date >= date_from)
+    if date_to is not None:
+        conds.append(Invoice.issue_date <= date_to)
+
+    amount = func.coalesce(func.sum(Invoice.total_amount), 0)
+    cnt = func.count()
+
+    total_row = (await session.execute(select(amount, cnt).where(*conds))).one()
+    total, count = float(total_row[0]), int(total_row[1])
+
+    by_reimbursement = {s.value: StatBucket(amount=0.0, count=0) for s in ReimbursementStatus}
+    rb_rows = (
+        await session.execute(
+            select(Invoice.reimbursement_status, amount, cnt)
+            .where(*conds)
+            .group_by(Invoice.reimbursement_status)
+        )
+    ).all()
+    for status_val, amt, c in rb_rows:
+        by_reimbursement[status_val] = StatBucket(amount=float(amt), count=int(c))
+
+    cat_label = func.coalesce(func.nullif(Invoice.category, ""), "未识别")
+    cat_rows = (
+        await session.execute(
+            select(cat_label, amount, cnt).where(*conds).group_by(cat_label).order_by(amount.desc())
+        )
+    ).all()
+    by_category = [CategoryStat(category=c, amount=float(a), count=int(n)) for c, a, n in cat_rows]
+
+    month_label = func.to_char(Invoice.issue_date, "YYYY-MM")
+    month_rows = (
+        await session.execute(
+            select(month_label, amount, cnt)
+            .where(*conds, Invoice.issue_date.is_not(None))
+            .group_by(month_label)
+        )
+    ).all()
+    by_month = _fill_months({m: (float(a), int(n)) for m, a, n in month_rows})
+
+    return StatsOut(
+        total=total,
+        count=count,
+        by_reimbursement=by_reimbursement,
+        by_category=by_category,
+        by_month=by_month,
+    )
 
 
 @router.post("/check-duplicate", response_model=DuplicateCheckOut)
