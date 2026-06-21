@@ -35,7 +35,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     } catch {
       /* ignore */
     }
-    if (res.status === 401) clearToken();
+    if (res.status === 401) {
+      // 会话过期/无效：清 token 并跳登录页，避免各页静默吞 401 后显示空白/“加载失败”。
+      // 登录页自身的 401（密码错误）不跳转，免死循环、就地显示错误。
+      clearToken();
+      if (
+        typeof window !== 'undefined' &&
+        !window.location.pathname.startsWith('/auth/')
+      ) {
+        window.location.href = '/auth/sign-in/default';
+      }
+    }
     throw new Error(detail);
   }
   return (res.status === 204 ? null : await res.json()) as T;
@@ -44,9 +54,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   get: <T>(p: string) => request<T>(p),
   post: <T>(p: string, body?: unknown) =>
-    request<T>(p, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+    request<T>(p, {
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+    }),
   patch: <T>(p: string, body?: unknown) =>
-    request<T>(p, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+    request<T>(p, {
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    }),
   delete: <T>(p: string) => request<T>(p, { method: 'DELETE' }),
 };
 
@@ -62,12 +78,18 @@ export interface CurrentUser {
 }
 
 export async function login(email: string, password: string): Promise<void> {
-  const data = await api.post<TokenResponse>('/auth/login', { email, password });
+  const data = await api.post<TokenResponse>('/auth/login', {
+    email,
+    password,
+  });
   setToken(data.access_token);
 }
 
 export async function register(email: string, password: string): Promise<void> {
-  const data = await api.post<TokenResponse>('/auth/register', { email, password });
+  const data = await api.post<TokenResponse>('/auth/register', {
+    email,
+    password,
+  });
   setToken(data.access_token);
 }
 
