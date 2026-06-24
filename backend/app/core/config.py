@@ -50,6 +50,27 @@ class Settings(BaseSettings):
     # ---- IMAP ----
     imap_poll_interval_seconds: int = 1800
 
+    # ---- 出站发件 SMTP（一键发送报销单）----
+    smtp_host: str = ""  # 如 smtp.example.com；为空则发送功能禁用（端点 503）
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_ssl: bool = True  # 465 隐式 TLS；用 587 STARTTLS 时设为 False
+    outbound_from_address: str = ""  # 发件地址（如 noreply@invoce.vpanel.cc）；空则回退 smtp_user
+    outbound_from_name: str = "发票助手"
+    # 导出 ZIP ≤ 此阈值直接当附件；超过则正文改放下载链接（默认 15 MB）
+    email_attach_max_bytes: int = 15 * 1024 * 1024
+    # 大附件场景的下载链接时效（R2/S3 预签名上限 7 天）
+    email_link_expire_seconds: int = 7 * 24 * 3600
+
+    @property
+    def outbound_enabled(self) -> bool:
+        return bool(self.smtp_host)
+
+    @property
+    def from_address(self) -> str:
+        return self.outbound_from_address or self.smtp_user
+
     # ---- Telegram Bot ----
     telegram_bot_token: str = ""  # @BotFather 颁发；为空则功能禁用
     telegram_bot_username: str = ""  # 不含 @，用于生成绑定深链 t.me/<username>?start=<code>
@@ -84,6 +105,13 @@ class Settings(BaseSettings):
         # 启用收票域却没给够强度的 webhook 密钥 → 端点会静默对所有请求 401，必须拦在启动期
         if self.is_production and self.inbound_enabled and len(self.inbound_webhook_secret) < 32:
             raise ValueError("启用收票邮箱后,生产环境必须设置长度 ≥ 32 的 INBOUND_WEBHOOK_SECRET")
+        # 启用出站发件却缺凭证/发件人 → 发送任务必失败，拦在启动期更早暴露配置问题
+        if (
+            self.is_production
+            and self.outbound_enabled
+            and not (self.smtp_user and self.smtp_password and self.from_address)
+        ):
+            raise ValueError("启用发件后,生产环境必须设置 SMTP_USER / SMTP_PASSWORD 与发件地址")
         return self
 
 

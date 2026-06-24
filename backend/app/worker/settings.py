@@ -11,6 +11,7 @@ from app.models.enums import InvoiceSource
 from app.services import email_sync, telegram_ingest
 from app.services.email_sync import sync_all
 from app.services.export_runner import run_export_task
+from app.services.export_sender import run_send_task
 from app.services.extraction import run_extraction
 
 
@@ -71,6 +72,14 @@ async def run_export(ctx: dict, task_id: str) -> str:
     return "ok"
 
 
+async def send_export_email(ctx: dict, send_id: str) -> str:
+    """报销单一键发送：取导出 ZIP → 智能附件/链接 → 投递邮件 → 回填状态（API 已快速 201）。"""
+    maker = ctx["sessionmaker"]
+    async with maker() as session:
+        await run_send_task(session, uuid.UUID(send_id))
+    return "ok"
+
+
 class WorkerSettings:
     functions = [
         heartbeat,
@@ -78,6 +87,7 @@ class WorkerSettings:
         process_telegram_update,
         process_inbound_email,
         run_export,
+        send_export_email,
     ]
     # 每 30 分钟轮询所有启用的邮箱（PRD 15-30 分钟）
     cron_jobs = [cron(sync_all, minute={0, 30}, run_at_startup=False)]

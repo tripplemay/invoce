@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.contacts import router as contacts_router
 from app.api.email_accounts import router as email_accounts_router
 from app.api.export_tasks import router as export_tasks_router
 from app.api.health import router as health_router
@@ -29,6 +30,7 @@ app.include_router(invoices_router)
 app.include_router(telegram_router)
 app.include_router(inbound_router)
 app.include_router(export_tasks_router)
+app.include_router(contacts_router)
 
 
 @app.get("/")

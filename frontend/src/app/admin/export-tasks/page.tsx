@@ -2,7 +2,7 @@
 
 import Card from 'components/card';
 import { useEffect, useState } from 'react';
-import { MdDownload, MdRefresh } from 'react-icons/md';
+import { MdDownload, MdRefresh, MdSend } from 'react-icons/md';
 import {
   EXPORT_STATUS_LABELS,
   ExportTask,
@@ -10,6 +10,7 @@ import {
   getExportDownloadUrl,
   listExportTasks,
 } from 'lib/exportTasks';
+import SendModal from './SendModal';
 
 const fmtTime = (iso: string): string => {
   const d = new Date(iso);
@@ -21,8 +22,7 @@ const fmtTime = (iso: string): string => {
 };
 
 const BADGE: Record<ExportTaskStatus, string> = {
-  pending:
-    'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-300',
+  pending: 'bg-gray-100 text-gray-600 dark:bg-navy-700 dark:text-gray-300',
   processing:
     'animate-pulse bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400',
   completed:
@@ -34,6 +34,7 @@ export default function ExportTasksPage() {
   const [tasks, setTasks] = useState<ExportTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sendFor, setSendFor] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -103,7 +104,9 @@ export default function ExportTasksPage() {
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`rounded-full px-3 py-1 text-xs font-medium ${BADGE[t.status]}`}
+                      className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        BADGE[t.status]
+                      }`}
                     >
                       {EXPORT_STATUS_LABELS[t.status]}
                     </span>
@@ -111,7 +114,9 @@ export default function ExportTasksPage() {
                       {t.invoice_count} 张发票
                     </span>
                     {t.mark_submitted && (
-                      <span className="text-xs text-gray-400">已标记报销中</span>
+                      <span className="text-xs text-gray-400">
+                        已标记报销中
+                      </span>
                     )}
                   </div>
                   <span className="text-xs text-gray-400">
@@ -122,15 +127,25 @@ export default function ExportTasksPage() {
                   </span>
                 </div>
                 {t.status === 'completed' ? (
-                  <button
-                    type="button"
-                    disabled={busy === t.id}
-                    onClick={() => download(t.id)}
-                    className="dark:bg-brand-500/10 flex items-center gap-1 rounded-lg bg-brand-50 px-4 py-2 text-sm font-medium text-brand-600 transition hover:bg-brand-100 disabled:opacity-50 dark:text-brand-400"
-                  >
-                    <MdDownload className="h-4 w-4" />
-                    {busy === t.id ? '准备中…' : '下载报销单'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSendFor(t.id)}
+                      className="flex items-center gap-1 rounded-lg bg-gray-50 px-4 py-2 text-sm font-medium text-navy-700 transition hover:bg-gray-100 dark:bg-navy-700 dark:text-white dark:hover:bg-navy-600"
+                    >
+                      <MdSend className="h-4 w-4" />
+                      发送
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy === t.id}
+                      onClick={() => download(t.id)}
+                      className="dark:bg-brand-500/10 flex items-center gap-1 rounded-lg bg-brand-50 px-4 py-2 text-sm font-medium text-brand-600 transition hover:bg-brand-100 disabled:opacity-50 dark:text-brand-400"
+                    >
+                      <MdDownload className="h-4 w-4" />
+                      {busy === t.id ? '准备中…' : '下载报销单'}
+                    </button>
+                  </div>
                 ) : t.status === 'failed' ? (
                   <span className="text-xs text-red-400">生成失败</span>
                 ) : (
@@ -141,6 +156,10 @@ export default function ExportTasksPage() {
           </div>
         )}
       </Card>
+
+      {sendFor && (
+        <SendModal taskId={sendFor} onClose={() => setSendFor(null)} />
+      )}
     </div>
   );
 }

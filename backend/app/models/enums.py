@@ -44,3 +44,19 @@ class ExportTaskStatus(StrEnum):
     PROCESSING = "processing"  # 生成中（worker 打包）
     COMPLETED = "completed"  # 已完成，可下载
     FAILED = "failed"  # 生成失败
+
+
+class EmailSendStatus(StrEnum):
+    """报销单邮件发送状态（异步）。"""
+
+    PENDING = "pending"  # 已创建，排队中
+    SENDING = "sending"  # 发送中（worker 投递）
+    SENT = "sent"  # 已发送
+    FAILED = "failed"  # 发送失败
+
+
+class EmailDeliveryMode(StrEnum):
+    """报销单投递形态：附件直发 / 正文放下载链接（按 ZIP 大小自动选择）。"""
+
+    ATTACHMENT = "attachment"  # ZIP 作为邮件附件
+    LINK = "link"  # 正文给短时效下载链接（大文件超附件阈值时）

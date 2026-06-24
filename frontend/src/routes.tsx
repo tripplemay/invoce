@@ -3,6 +3,7 @@ import {
   MdReceiptLong,
   MdInsights,
   MdDownloadForOffline,
+  MdContacts,
 } from 'react-icons/md';
 
 // Sidebar route configuration for the "invoce" app.
@@ -32,6 +33,12 @@ const routes = [
     layout: '/admin',
     path: '/export-tasks',
     icon: <MdDownloadForOffline className="text-inherit h-5 w-5" />,
+  },
+  {
+    name: '通讯录',
+    layout: '/admin',
+    path: '/contacts',
+    icon: <MdContacts className="text-inherit h-5 w-5" />,
   },
 ];
 export default routes;

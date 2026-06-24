@@ -43,9 +43,16 @@ docker compose up -d --build  # 起全套服务
 - **校对**：滑出抽屉编辑，号码失焦/保存时联合防重（修复全电发票 NULL 陷阱）。
 - **分析**：指标卡 + Tremor 环形/面积图（真实数据）。
 - **导出**：勾选 → 对账 Excel + 原件重命名 ZIP，导出即流转「报销中」。
+- **发送**：已完成的导出可一键发到指定邮箱（通讯录管理收件人 + 临时邮箱），下游处理人直接拿全套材料；ZIP 小则作附件、大则正文给 7 天下载链接（异步投递，状态可查）。
+
+## 发送报销单（出站 SMTP）
+- 在 `.env` 配 `SMTP_HOST/PORT/USER/PASSWORD`、`OUTBOUND_FROM_ADDRESS`（留空 `SMTP_HOST` 则发送功能禁用，端点返回 503）。
+- 发件域需在 DNS 配好 **SPF / DKIM / DMARC**，否则邮件易进垃圾箱甚至被收件方拒收。
+- 大附件阈值 `EMAIL_ATTACH_MAX_BYTES`（默认 15MB）、链接时效 `EMAIL_LINK_EXPIRE_SECONDS`（默认 7 天，R2/S3 预签名上限）。
 
 ## 安全
 - 私有 S3 桶 + 60s 预签名预览；IMAP 授权码 Fernet 加密落库。
+- 发送邮件走平台统一发件账户，凭证仅在 `.env`；收件人 `EmailStr` 校验 + 头部 CR/LF 注入防护；大附件下载链接为短时效预签名。
 - 生产默认密钥 fail-fast；外链下载/邮箱主机 SSRF 防护；上传魔数校验 + 大小限制；CORS 收紧；导出数量上限。
 - CI 集成 gitleaks 密钥扫描 + trivy 依赖扫描。
 
